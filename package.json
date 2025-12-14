@@ -1,0 +1,46 @@
+{
+  "name": "@sunnyhealth/sunny-agents-sdk",
+  "version": "0.0.2",
+  "description": "Embed the Sunny Agents chat experience inside any app.",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "browser": "./dist/index.js",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist/**/*",
+    "package.json",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "keywords": [
+    "sunny",
+    "chat",
+    "agents",
+    "sdk"
+  ],
+  "author": "Sunny Health",
+  "license": "UNLICENSED",
+  "publishConfig": {
+    "registry": "https://npm.cloudsmith.io/sunnyhealth/sunny-agents-sdk/",
+    "access": "restricted"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}
+

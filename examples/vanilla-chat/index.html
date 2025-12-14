@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sunny Agents SDK Example</title>
+  </head>
+  <body>
+    <main class="app">
+      <header>
+        <h1>Sunny Agents SDK Example</h1>
+        <p>
+          Start the dev server with <code>npm run dev</code>, then optionally paste an access token to talk to the real Sunny backend.
+          Leaving the token blank keeps the widget in anonymous/local mode.
+        </p>
+      </header>
+
+      <section class="token-panel">
+        <form id="token-form">
+          <label for="token-input">Access token</label>
+          <input id="token-input" name="token" type="password" placeholder="sk-live-..." autocomplete="off" />
+          <div class="token-actions">
+            <button type="submit">Save token</button>
+            <button type="button" id="clear-token">Clear token</button>
+          </div>
+          <small>
+            Tokens are stored only in your browser's localStorage for this example. Reload after saving to rehydrate the chat with the latest value.
+          </small>
+        </form>
+      </section>
+
+      <section class="chat-panel">
+        <div id="sunny-chat" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
