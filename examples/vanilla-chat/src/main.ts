@@ -24,8 +24,13 @@ const hasServerToken = typeof tokenProvider === 'function';
 const chat = attachSunnyChat({
   container: chatContainer,
   anonymous: !hasServerToken,
-  headerTitle: 'Sunny Agents Demo',
-  placeholder: 'Ask Sunny anything…',
+  headerTitle: 'Sunny Chat',
+  placeholder: 'Ask about your benefits…',
+  colors: {
+    primary: '#048db4',   // Spinnaker Blue
+    secondary: '#0c3c5c', // Neptune's Wrath
+    accent: '#168c55',    // Vital Green
+  },
   config: {
     websocketUrl: (import.meta.env.VITE_SUNNY_WS_URL as string | undefined) ?? 'wss://chat.api.sunnyhealthai.com',
     authorizeUrl:
