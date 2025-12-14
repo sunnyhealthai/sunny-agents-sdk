@@ -66,7 +66,6 @@ If you want a ready-made UI without React, mount the vanilla widget:
 
 - The SDK streams assistant responses using the same `response.output_text.*` events emitted by the backend. Additional event types are ignored but can be handled by extending `SunnyAgentsClient`.
 - File uploads accept base64 payloads via `files` in `sendMessage`.
-- The package targets browser runtimes; run `npm run build` (or rely on the `prepublishOnly` hook) to emit `dist/` before publishing to your private registry.
 
 ## Example project
 
