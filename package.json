@@ -22,8 +22,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
-    "prepublishOnly": "npm run clean && npm run build"
+    "prepublishOnly": "pnpm run clean && pnpm run build"
   },
+  "packageManager": "pnpm@10.25.0",
   "keywords": [
     "sunny",
     "chat",

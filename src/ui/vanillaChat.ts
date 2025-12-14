@@ -7,6 +7,18 @@ import type {
   SunnyAgentsConfig,
 } from '../types';
 
+/**
+ * Theme color configuration for the chat UI.
+ */
+export interface VanillaChatColors {
+  /** Primary color used for user messages, send button, and focus states. Default: #006fff */
+  primary?: string;
+  /** Secondary color used for text and UI elements. Default: #212124 */
+  secondary?: string;
+  /** Accent color used for success states and highlights. Default: #22c55e */
+  accent?: string;
+}
+
 export interface VanillaChatOptions {
   container: HTMLElement;
   client?: SunnyAgentsClient;
@@ -22,6 +34,11 @@ export interface VanillaChatOptions {
     * Defaults to "sunny_agents_conversation_id".
     */
   conversationStorageKey?: string;
+  /**
+   * Custom theme colors for the chat UI.
+   * Uses CSS custom properties for easy styling.
+   */
+  colors?: VanillaChatColors;
 }
 
 export interface VanillaChatInstance {
@@ -56,6 +73,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     placeholder = 'Ask anything…',
     anonymous = false,
     conversationStorageKey = 'sunny_agents_conversation_id',
+    colors = {},
   } = options;
 
   const persistedConversationId = getOrCreateConversationId(conversationStorageKey);
@@ -73,25 +91,19 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   // DOM structure
   const root = document.createElement('div');
   root.className = 'sunny-chat sunny-chat--collapsed';
+  
+  // Apply custom color properties
+  if (colors.primary) root.style.setProperty('--sunny-color-primary', colors.primary);
+  if (colors.secondary) root.style.setProperty('--sunny-color-secondary', colors.secondary);
+  if (colors.accent) root.style.setProperty('--sunny-color-accent', colors.accent);
   root.innerHTML = `
     <div class="sunny-chat-modal-backdrop" aria-hidden="true">
-      <div class="sunny-chat-modal" role="dialog" aria-modal="true" aria-labelledby="sunny-chat-title">
+      <div class="sunny-chat-modal" role="dialog" aria-modal="true">
         <button type="button" class="sunny-chat-modal__close" aria-label="Close chat">
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M6 6l12 12M6 18L18 6" stroke-linecap="round" />
           </svg>
         </button>
-        <div class="sunny-chat__header">
-          <div class="sunny-chat__header-avatar">
-            <svg viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
-            </svg>
-          </div>
-          <div class="sunny-chat__header-info">
-            <h3 class="sunny-chat__title" id="sunny-chat-title">${headerTitle}</h3>
-            <p class="sunny-chat__subtitle">Healthcare Concierge</p>
-          </div>
-        </div>
         <div class="sunny-chat__messages" aria-live="polite"></div>
         <div class="sunny-chat-modal__composer">
           <input type="text" class="sunny-chat-modal__input" placeholder="${placeholder}" aria-label="${placeholder}" />
@@ -566,23 +578,63 @@ function ensureStyles() {
   const style = document.createElement('style');
   style.id = STYLE_ID;
   style.textContent = `
+  @import url('https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap');
+
   .sunny-chat {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    color: #212124;
+    /* Theme colors - can be overridden via options */
+    --sunny-color-primary: #006fff;
+    --sunny-color-secondary: #212124;
+    --sunny-color-accent: #22c55e;
+    --sunny-color-danger: #ef4444;
+    --sunny-color-danger-hover: #dc2626;
+    
+    /* Neutral palette */
+    --sunny-gray-50: #fafbfc;
+    --sunny-gray-100: #f6f6f8;
+    --sunny-gray-200: #ebebed;
+    --sunny-gray-300: #dbdce1;
+    --sunny-gray-400: #c4c5cb;
+    --sunny-gray-500: #838691;
+    --sunny-gray-600: #52535a;
+    
+    /* Computed color variants */
+    --sunny-color-primary-hover: color-mix(in srgb, var(--sunny-color-primary) 90%, black);
+    --sunny-color-primary-active: color-mix(in srgb, var(--sunny-color-primary) 80%, black);
+    --sunny-color-primary-shadow: color-mix(in srgb, var(--sunny-color-primary) 30%, transparent);
+    --sunny-color-primary-ring: color-mix(in srgb, var(--sunny-color-primary) 12%, transparent);
+    --sunny-color-accent-hover: color-mix(in srgb, var(--sunny-color-accent) 85%, black);
+    --sunny-color-accent-shadow: color-mix(in srgb, var(--sunny-color-accent) 25%, transparent);
+    --sunny-color-accent-bg: color-mix(in srgb, var(--sunny-color-accent) 8%, white);
+    --sunny-color-danger-shadow: rgba(239, 68, 68, 0.25);
+    
+    /* Shadows */
+    --sunny-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04);
+    --sunny-shadow-md: 0 4px 16px rgba(0, 0, 0, 0.06);
+    --sunny-shadow-lg: 0 6px 20px rgba(0, 0, 0, 0.08);
+    
+    /* Timing */
+    --sunny-transition-fast: 120ms ease;
+    --sunny-transition-normal: 200ms ease;
+    
+    font-family: 'Lato', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    color: var(--sunny-color-secondary);
+    line-height: 1.5;
   }
 
   /* Modal Backdrop */
   .sunny-chat-modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: rgba(33, 33, 36, 0.85);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
     display: flex;
     align-items: center;
     justify-content: center;
     z-index: 9999;
     opacity: 0;
     visibility: hidden;
-    transition: opacity 150ms ease, visibility 150ms ease;
+    transition: opacity var(--sunny-transition-normal), visibility var(--sunny-transition-normal);
   }
   .sunny-chat-modal-backdrop--open {
     opacity: 1;
@@ -593,126 +645,132 @@ function ensureStyles() {
   .sunny-chat-modal {
     position: relative;
     width: 794px;
-    max-width: 95vw;
+    max-width: calc(100vw - 32px);
     height: 560px;
-    max-height: 85vh;
-    background: #ffffff;
-    border-radius: 16px;
+    max-height: calc(100vh - 64px);
+    background: #fff;
+    border-radius: 12px;
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    transform: translateY(10px);
-    transition: transform 150ms ease;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    transform: scale(0.96) translateY(8px);
+    opacity: 0;
+    transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1), opacity var(--sunny-transition-normal);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04), 0 8px 16px rgba(0, 0, 0, 0.08), 0 24px 48px rgba(0, 0, 0, 0.16);
   }
   .sunny-chat-modal-backdrop--open .sunny-chat-modal {
-    transform: translateY(0);
+    transform: scale(1) translateY(0);
+    opacity: 1;
   }
 
   /* Close Button */
   .sunny-chat-modal__close {
     position: absolute;
-    top: 16px;
-    right: 16px;
-    width: 28px;
-    height: 28px;
-    border-radius: 6px;
+    top: 12px;
+    right: 12px;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
     border: none;
-    background: rgba(0, 0, 0, 0.05);
-    color: #52535a;
+    background: transparent;
+    color: var(--sunny-gray-500);
     cursor: pointer;
     display: grid;
     place-items: center;
     z-index: 10;
-    transition: background 100ms ease;
+    transition: background var(--sunny-transition-fast), color var(--sunny-transition-fast);
   }
   .sunny-chat-modal__close:hover {
-    background: rgba(0, 0, 0, 0.1);
+    background: var(--sunny-gray-100);
+    color: var(--sunny-gray-600);
+  }
+  .sunny-chat-modal__close:active {
+    background: var(--sunny-gray-200);
   }
   .sunny-chat-modal__close svg {
-    width: 16px;
-    height: 16px;
-  }
-
-  /* Header */
-  .sunny-chat__header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 20px 24px;
-    background: #ffffff;
-    border-bottom: 1px solid #f0f0f2;
-  }
-  .sunny-chat__header-avatar {
-    width: 36px;
-    height: 36px;
-    background: linear-gradient(135deg, #006fff 0%, #0057cc 100%);
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #ffffff;
-    flex-shrink: 0;
-  }
-  .sunny-chat__header-avatar svg {
-    width: 20px;
-    height: 20px;
-  }
-  .sunny-chat__header-info {
-    flex: 1;
-    min-width: 0;
-  }
-  .sunny-chat__title {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 600;
-    color: #212124;
-  }
-  .sunny-chat__subtitle {
-    margin: 2px 0 0;
-    font-size: 13px;
-    color: #838691;
+    width: 18px;
+    height: 18px;
   }
 
   /* Messages Area */
   .sunny-chat__messages {
     flex: 1;
     overflow-y: auto;
-    padding: 24px;
+    padding: 48px 24px 24px;
     display: flex;
     flex-direction: column;
     gap: 16px;
-    background: #fafafa;
+    background: #fff;
+  }
+  .sunny-chat__messages::-webkit-scrollbar {
+    width: 6px;
+  }
+  .sunny-chat__messages::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .sunny-chat__messages::-webkit-scrollbar-thumb {
+    background: var(--sunny-gray-300);
+    border-radius: 3px;
+  }
+  .sunny-chat__messages::-webkit-scrollbar-thumb:hover {
+    background: var(--sunny-gray-400);
   }
 
   /* Message Bubbles */
   .sunny-chat__message {
     max-width: 85%;
-    padding: 12px 16px;
-    border-radius: 12px;
-    line-height: 1.5;
+    padding: 14px 18px;
+    border-radius: 14px;
+    line-height: 1.55;
     font-size: 14px;
   }
   .sunny-chat__message--user {
     align-self: flex-end;
-    background: #006fff;
-    color: #ffffff;
+    background: var(--sunny-color-primary);
+    color: #fff;
+    border-radius: 14px 14px 4px 14px;
+    box-shadow: 0 2px 8px var(--sunny-color-primary-shadow);
   }
   .sunny-chat__message--assistant {
     align-self: flex-start;
-    background: #ffffff;
-    color: #212124;
-    border: 1px solid #e8e8ea;
+    background: #fff;
+    color: var(--sunny-color-secondary);
+    border: 1px solid var(--sunny-gray-200);
+    border-radius: 14px 14px 14px 4px;
+    box-shadow: var(--sunny-shadow-sm);
   }
   .sunny-chat__bubble {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
   }
   .sunny-chat__bubble p {
     margin: 0;
     line-height: 1.6;
-    color: inherit;
+  }
+
+  /* Shared Input Styles */
+  .sunny-chat-modal__input,
+  .sunny-chat__trigger-input {
+    border: 1px solid var(--sunny-gray-300);
+    background: #fff;
+    color: var(--sunny-color-secondary);
+    font-size: 15px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color var(--sunny-transition-fast), box-shadow var(--sunny-transition-fast);
+  }
+  .sunny-chat-modal__input:hover,
+  .sunny-chat__trigger-input:hover {
+    border-color: var(--sunny-gray-400);
+  }
+  .sunny-chat-modal__input:focus,
+  .sunny-chat__trigger-input:focus {
+    border-color: var(--sunny-color-primary);
+  }
+  .sunny-chat-modal__input::placeholder,
+  .sunny-chat__trigger-input::placeholder {
+    color: var(--sunny-gray-500);
   }
 
   /* Modal Composer */
@@ -720,88 +778,75 @@ function ensureStyles() {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 16px 24px 20px;
-    background: #ffffff;
-    border-top: 1px solid #f0f0f2;
+    padding: 16px 20px 20px;
+    background: #fff;
+    border-top: 1px solid var(--sunny-gray-200);
   }
   .sunny-chat-modal__input {
     flex: 1;
-    height: 44px;
-    padding: 0 16px;
-    border: 1px solid #dbdce1;
-    border-radius: 22px;
-    background: #ffffff;
-    color: #212124;
-    font-size: 14px;
-    font-family: inherit;
-    outline: none;
-    transition: border-color 100ms ease, box-shadow 100ms ease;
+    height: 48px;
+    padding: 0 20px;
+    border-radius: 24px;
   }
   .sunny-chat-modal__input:focus {
-    border-color: #006fff;
-    box-shadow: 0 0 0 3px rgba(0, 111, 255, 0.1);
-  }
-  .sunny-chat-modal__input::placeholder {
-    color: #838691;
+    box-shadow: 0 0 0 4px var(--sunny-color-primary-ring);
   }
 
-  /* Trigger Input - Ubiquiti Style */
+  /* Trigger Input */
   .sunny-chat__trigger {
     display: flex;
     align-items: center;
     position: relative;
+    max-width: 600px;
+    margin: 0 auto;
   }
   .sunny-chat__trigger-input {
     width: 100%;
-    height: 52px;
-    padding: 0 56px 0 20px;
-    border: 1px solid #dbdce1;
-    border-radius: 26px;
-    background: #ffffff;
-    color: #212124;
-    font-size: 15px;
-    font-family: inherit;
-    outline: none;
-    transition: border-color 100ms ease, box-shadow 100ms ease;
+    height: 56px;
+    padding: 0 60px 0 24px;
+    border-radius: 28px;
+    box-shadow: var(--sunny-shadow-md);
+    transition: border-color var(--sunny-transition-fast), box-shadow var(--sunny-transition-fast), background var(--sunny-transition-fast);
+  }
+  .sunny-chat__trigger-input:hover {
+    box-shadow: var(--sunny-shadow-lg);
   }
   .sunny-chat__trigger-input:focus {
-    border-color: #006fff;
-    box-shadow: 0 0 0 3px rgba(0, 111, 255, 0.1);
-  }
-  .sunny-chat__trigger-input::placeholder {
-    color: #838691;
+    box-shadow: 0 0 0 4px var(--sunny-color-primary-ring), var(--sunny-shadow-lg);
   }
 
   /* Send Button */
   .sunny-chat__send-btn {
     position: absolute;
-    right: 6px;
+    right: 8px;
     width: 40px;
     height: 40px;
     padding: 0;
-    background: #006fff;
-    color: #ffffff;
+    background: var(--sunny-color-primary);
+    color: #fff;
     border: none;
     border-radius: 50%;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: background 100ms ease, transform 100ms ease;
+    transition: background var(--sunny-transition-fast), transform var(--sunny-transition-fast), box-shadow var(--sunny-transition-fast);
     flex-shrink: 0;
+    box-shadow: 0 2px 8px var(--sunny-color-primary-shadow);
   }
   .sunny-chat__send-btn:hover {
-    background: #0057cc;
+    background: var(--sunny-color-primary-hover);
+    box-shadow: 0 4px 12px var(--sunny-color-primary-shadow);
   }
   .sunny-chat__send-btn:active {
-    transform: scale(0.95);
+    transform: scale(0.94);
+    background: var(--sunny-color-primary-active);
   }
   .sunny-chat__send-btn svg {
     width: 18px;
     height: 18px;
+    transform: translate(-1px, 1px);
   }
-
-  /* Modal Send Button */
   .sunny-chat-modal__composer .sunny-chat__send-btn {
     position: relative;
     right: auto;
@@ -809,12 +854,14 @@ function ensureStyles() {
 
   /* Provider Card */
   .sunny-provider-card {
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--sunny-gray-200);
     border-radius: 12px;
-    padding: 16px;
-    background: #ffffff;
+    padding: 18px;
+    background: #fff;
+    box-shadow: var(--sunny-shadow-sm);
   }
-  .sunny-provider-card--loading {
+  .sunny-provider-card--loading,
+  .sunny-approval-card--busy {
     opacity: 0.7;
   }
   .sunny-provider-card__header {
@@ -822,21 +869,28 @@ function ensureStyles() {
     flex-wrap: wrap;
     gap: 8px;
     align-items: baseline;
-    margin-bottom: 12px;
+    margin-bottom: 14px;
   }
   .sunny-provider-card__name {
-    font-weight: 600;
+    font-weight: 700;
     font-size: 16px;
-    color: #111827;
+    color: var(--sunny-color-secondary);
   }
-  .sunny-provider-card__specialty {
+  .sunny-provider-card__specialty,
+  .sunny-provider-card__loading,
+  .sunny-provider-card__error,
+  .sunny-approval-card__label {
     font-size: 14px;
-    color: #6b7280;
+    color: var(--sunny-gray-500);
+  }
+  .sunny-approval-card__label {
+    font-size: 13px;
   }
   .sunny-provider-card__rating {
     margin-left: auto;
     font-size: 13px;
     color: #f59e0b;
+    font-weight: 600;
   }
   .sunny-provider-card__meta {
     list-style: none;
@@ -844,27 +898,24 @@ function ensureStyles() {
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 8px;
   }
   .sunny-provider-card__meta-label {
     display: block;
-    font-size: 12px;
+    font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: #9ca3af;
+    color: var(--sunny-gray-500);
+    font-weight: 600;
   }
   .sunny-provider-card__meta-value {
     display: block;
     font-size: 14px;
-    color: #111827;
-  }
-  .sunny-provider-card__loading,
-  .sunny-provider-card__error {
-    font-size: 14px;
-    color: #6b7280;
+    color: var(--sunny-color-secondary);
+    margin-top: 2px;
   }
   .sunny-provider-card--error .sunny-provider-card__loading {
-    color: #dc2626;
+    color: var(--sunny-color-danger);
   }
 
   /* Approval Cards */
@@ -874,89 +925,120 @@ function ensureStyles() {
     gap: 12px;
   }
   .sunny-approval-card {
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--sunny-gray-200);
     border-radius: 12px;
-    padding: 14px;
-    background: #f9fafb;
+    padding: 16px;
+    background: var(--sunny-gray-50);
   }
   .sunny-approval-card--approved {
-    border-color: #22c55e;
-    background: #f0fdf4;
+    border-color: var(--sunny-color-accent);
+    background: var(--sunny-color-accent-bg);
   }
   .sunny-approval-card--rejected {
-    border-color: #ef4444;
+    border-color: var(--sunny-color-danger);
     background: #fef2f2;
-  }
-  .sunny-approval-card--busy {
-    opacity: 0.7;
   }
   .sunny-approval-card__header {
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    margin-bottom: 10px;
+    gap: 4px;
+    margin-bottom: 12px;
   }
   .sunny-approval-card__title {
-    font-weight: 600;
-    color: #111827;
-  }
-  .sunny-approval-card__label {
-    font-size: 13px;
-    color: #6b7280;
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--sunny-color-secondary);
   }
   .sunny-approval-card__status {
     margin-top: 4px;
-    font-size: 12px;
+    font-size: 11px;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: #1E3765;
+    letter-spacing: 0.06em;
+    color: var(--sunny-color-primary);
+    font-weight: 700;
   }
   .sunny-approval-card__arguments {
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
+    background: #fff;
+    border: 1px solid var(--sunny-gray-200);
     border-radius: 8px;
-    padding: 10px;
+    padding: 12px;
     font-size: 12px;
     max-height: 200px;
     overflow: auto;
-    font-family: monospace;
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+    color: var(--sunny-gray-600);
+    line-height: 1.5;
   }
   .sunny-approval-card__actions {
     display: flex;
-    gap: 8px;
-    margin-top: 12px;
+    gap: 10px;
+    margin-top: 14px;
   }
   .sunny-approval-card__btn {
     flex: 1;
     border: none;
     border-radius: 8px;
-    padding: 10px 16px;
-    font-weight: 600;
+    padding: 12px 18px;
+    font-weight: 700;
     font-size: 14px;
     cursor: pointer;
-    color: #ffffff;
-    transition: background 150ms ease, transform 150ms ease;
+    color: #fff;
+    transition: background var(--sunny-transition-fast), transform var(--sunny-transition-fast), box-shadow var(--sunny-transition-fast);
+    font-family: inherit;
   }
   .sunny-approval-card__btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
   .sunny-approval-card__btn--approve {
-    background: #22c55e;
+    background: var(--sunny-color-accent);
+    box-shadow: 0 2px 8px var(--sunny-color-accent-shadow);
   }
   .sunny-approval-card__btn--approve:hover:not(:disabled) {
-    background: #16a34a;
+    background: var(--sunny-color-accent-hover);
+    box-shadow: 0 4px 12px var(--sunny-color-accent-shadow);
   }
   .sunny-approval-card__btn--reject {
-    background: #ef4444;
+    background: var(--sunny-color-danger);
+    box-shadow: 0 2px 8px var(--sunny-color-danger-shadow);
   }
   .sunny-approval-card__btn--reject:hover:not(:disabled) {
-    background: #dc2626;
+    background: var(--sunny-color-danger-hover);
+    box-shadow: 0 4px 12px var(--sunny-color-danger-shadow);
+  }
+  .sunny-approval-card__btn--approve:active:not(:disabled),
+  .sunny-approval-card__btn--reject:active:not(:disabled) {
+    transform: scale(0.98);
   }
   .sunny-approval-card__error {
-    margin-top: 8px;
-    font-size: 12px;
-    color: #dc2626;
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--sunny-color-danger);
+    font-weight: 500;
+  }
+
+  /* Responsive */
+  @media (max-width: 640px) {
+    .sunny-chat-modal {
+      width: 100%;
+      max-width: 100%;
+      height: 100%;
+      max-height: 100%;
+      border-radius: 0;
+    }
+    .sunny-chat__trigger {
+      max-width: 100%;
+    }
+    .sunny-chat__trigger-input,
+    .sunny-chat-modal__input {
+      font-size: 16px; /* Prevents zoom on iOS */
+    }
+    .sunny-chat__trigger-input {
+      height: 52px;
+    }
+    .sunny-chat__messages {
+      padding: 16px;
+    }
   }
   `;
   document.head.appendChild(style);
