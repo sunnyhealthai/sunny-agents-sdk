@@ -1,11 +1,11 @@
-# @sunnyhealth/sunny-agents-sdk
+# @sunnyhealthai/agents-sdk
 
 Drop the Sunny chat experience into any React application. The SDK mirrors the websocket flow used by the `asksunny` app: it creates conversations over the LLM gateway websocket, streams assistant text deltas, and exposes a ready-to-use chat component.
 
 ## Quick start (headless)
 
 ```ts
-import { SunnyAgentsClient } from "@sunnyhealth/sunny-agents-sdk";
+import { SunnyAgentsClient } from "@sunnyhealthai/agents-sdk";
 
 const client = new SunnyAgentsClient({
   websocketUrl: "wss://llm.sunnyhealth.live",
@@ -44,7 +44,7 @@ If you want a ready-made UI without React, mount the vanilla widget:
 ```html
 <div id="sunny-chat" style="height: 520px;"></div>
 <script type="module">
-  import { attachSunnyChat } from "@sunnyhealth/sunny-agents-sdk";
+  import { attachSunnyChat } from "@sunnyhealthai/agents-sdk";
 
   attachSunnyChat({
     container: document.getElementById("sunny-chat"),

@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@sunnyhealth/sunny-agents-sdk": "file:../.."
+    "@sunnyhealthai/agents-sdk": "file:../.."
   },
   "devDependencies": {
     "typescript": "^5.6.2",

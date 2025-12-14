@@ -1,4 +1,4 @@
-import { attachSunnyChat } from '@sunnyhealth/sunny-agents-sdk';
+import { attachSunnyChat } from '@sunnyhealthai/agents-sdk';
 import './style.css';
 
 const chatContainer = document.getElementById('sunny-chat');

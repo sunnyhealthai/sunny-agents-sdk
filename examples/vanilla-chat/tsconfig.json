@@ -7,7 +7,7 @@
     "strict": true,
     "baseUrl": ".",
     "paths": {
-      "@sunnyhealth/sunny-agents-sdk": ["../../src"]
+      "@sunnyhealthai/agents-sdk": ["../../src"]
     },
     "esModuleInterop": true,
     "skipLibCheck": true,

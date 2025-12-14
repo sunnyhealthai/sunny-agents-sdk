@@ -9,7 +9,7 @@ export default defineConfig({
   resolve: {
     alias: {
       // Point to source files for hot reload during development
-      '@sunnyhealth/sunny-agents-sdk': path.resolve(__dirname, '../../src/index.ts'),
+      '@sunnyhealthai/agents-sdk': path.resolve(__dirname, '../../src/index.ts'),
     },
   },
 });

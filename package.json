@@ -1,5 +1,5 @@
 {
-  "name": "@sunnyhealth/sunny-agents-sdk",
+  "name": "@sunnyhealthai/agents-sdk",
   "version": "0.0.1",
   "description": "Embed the Sunny Agents chat experience inside any app.",
   "type": "module",
@@ -32,10 +32,9 @@
     "sdk"
   ],
   "author": "Sunny Health",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "publishConfig": {
-    "registry": "https://npm.cloudsmith.io/sunnyhealth/sunny-agents-sdk/",
-    "access": "restricted"
+    "access": "public"
   },
   "devDependencies": {
     "typescript": "^5.0.0"
