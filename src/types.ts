@@ -36,8 +36,8 @@ export interface SunnyAgentsConfig {
   sessionStorageKey?: string;
   initialConversationId?: string;
   /**
-   * Base URL for REST API calls (e.g., fetching artifacts). Defaults to the origin
-   * portion of `authorizeUrl` (https://chat.api.sunnyhealthai.com).
+   * Base URL for REST API calls (e.g., fetching artifacts). Defaults to
+   * https://api.sunnyhealthai.com.
    */
   apiBaseUrl?: string;
   /**

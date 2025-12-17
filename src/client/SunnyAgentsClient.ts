@@ -114,6 +114,8 @@ export class SunnyAgentsClient {
   private readonly apiBaseUrl: string;
   private readonly artifactCache = new Map<string, ChatArtifact>();
   private readonly artifactRequestCache = new Map<string, Promise<ChatArtifact | null>>();
+  private readonly serverCreatedConversations = new Set<string>();
+  private readonly conversationCreationPromises = new Map<string, Promise<string>>();
 
   constructor(private readonly config: SunnyAgentsConfig = {}) {
     this.ws = new LLMWebSocketManager({
@@ -172,8 +174,18 @@ export class SunnyAgentsClient {
   }
 
   async sendMessage(message: string, options?: SendMessageOptions): Promise<{ conversationId: string }> {
-    const conversationId = this.ensureConversation(options?.conversationId, options?.title);
-    this.activeConversationId = conversationId;
+    let conversationId = this.ensureConversation(options?.conversationId, options?.title);
+
+    // In authenticated mode, ensure the conversation exists on the server before sending
+    if (this.shouldCreateServerConversations() && !this.serverCreatedConversations.has(conversationId)) {
+      // Create conversation on server first - this may return a different ID if server generates one
+      const serverConversationId = await this.createConversation(options?.title ?? null, conversationId);
+      // Use the server-provided ID (which may differ from our local ID)
+      conversationId = serverConversationId;
+      this.activeConversationId = conversationId;
+    } else {
+      this.activeConversationId = conversationId;
+    }
 
     // Add the user message locally
     this.appendMessage(conversationId, {
@@ -238,23 +250,92 @@ export class SunnyAgentsClient {
     this.notify();
   }
 
-  async createConversation(title?: string | null): Promise<string> {
-    const conversationId = this.ensureConversation(null, title ?? undefined);
+  async createConversation(title?: string | null, conversationId?: string | null): Promise<string> {
+    const id = conversationId ?? this.ensureConversation(null, title ?? undefined);
+    this.ensureConversation(id, title ?? undefined);
 
     // Only hit the server when explicitly allowed and authenticated.
     if (this.shouldCreateServerConversations()) {
-      try {
-        await this.ws.connect();
-        if (!this.ws.getIsAnonymous()) {
-          await this.ws.send({ type: 'conversation.create', name: title ?? null });
+      // If we're already waiting for this conversation to be created, return that promise
+      const existingPromise = this.conversationCreationPromises.get(id);
+      if (existingPromise) {
+        return existingPromise;
+      }
+
+      // Create a promise that resolves when the conversation is created on the server
+      const creationPromise = (async () => {
+        try {
+          await this.ws.connect();
+          if (!this.ws.getIsAnonymous()) {
+            // Don't send conversation_id - server generates its own ID
+            // The server will return the ID in conversation.created event
+            await this.ws.send({ type: 'conversation.create', name: title ?? null });
+            
+            // Wait for conversation.created event (with timeout)
+            const serverId = await new Promise<string>((resolve, reject) => {
+              const timeout = setTimeout(() => {
+                // Timeout: server didn't respond in time
+                // If we provided an ID, assume it failed and we should use server-generated
+                // For now, reject to indicate creation didn't complete
+                cleanup();
+                // Actually, let's resolve with the local ID and mark it - the server might have created it
+                // but the event was delayed. The sendMessage will handle the error if it doesn't exist.
+                resolve(id);
+              }, 5000); // 5 second timeout
+              
+              const handler = (payload: ClientEventMap['conversationCreated']) => {
+                const createdId = payload.conversationId;
+                cleanup();
+                resolve(createdId);
+              };
+              
+              const cleanup = () => {
+                clearTimeout(timeout);
+                this.off('conversationCreated', handler);
+              };
+              
+              this.on('conversationCreated', handler);
+            });
+            
+            // Server returned an ID - use it (may differ from our local ID)
+            // Update local conversation if IDs differ
+            if (serverId !== id) {
+              const localConvo = this.conversations.get(id);
+              if (localConvo) {
+                // Move conversation to server ID
+                this.conversations.delete(id);
+                this.conversations.set(serverId, { ...localConvo, id: serverId });
+              }
+              // Update active conversation if it was the one we just created
+              if (this.activeConversationId === id) {
+                this.activeConversationId = serverId;
+              }
+            }
+            
+            // Mark as server-created (will be confirmed by conversation.created event handler too)
+            this.serverCreatedConversations.add(serverId);
+            return serverId;
+          }
+        } catch {
+          // If connection/auth fails, stay local-only.
         }
-      } catch {
-        // If connection/auth fails, stay local-only.
+        return id;
+      })();
+      
+      this.conversationCreationPromises.set(id, creationPromise);
+      
+      try {
+        const result = await creationPromise;
+        this.conversationCreationPromises.delete(id);
+        return result;
+      } catch (error) {
+        this.conversationCreationPromises.delete(id);
+        throw error;
       }
     }
 
     this.notify();
-    return conversationId;
+    return id;
   }
 
   private buildUserMessageItem(message: string, files?: FileAttachment[]): InputMessageItem {
@@ -305,6 +386,7 @@ export class SunnyAgentsClient {
       if (createdId) {
         const title = (raw as any).conversation?.title || (raw as any).title || null;
         this.ensureConversation(createdId, title ?? undefined);
+        this.serverCreatedConversations.add(createdId);
         if (!this.activeConversationId) {
           this.activeConversationId = createdId;
         }
@@ -336,6 +418,8 @@ export class SunnyAgentsClient {
         } as SunnyAgentMessage;
       });
       const ensuredId = this.ensureConversation(conversationId);
+      // Mark as server-created since we received messages from server
+      this.serverCreatedConversations.add(ensuredId);
       const base = this.conversations.get(ensuredId)!;
       this.conversations.set(ensuredId, {
         ...base,
@@ -626,14 +710,8 @@ export class SunnyAgentsClient {
     if (config.apiBaseUrl) {
       return config.apiBaseUrl.replace(/\/$/, '');
     }
-    const fallback = 'https://chat.api.sunnyhealthai.com';
-    const source = config.authorizeUrl ?? fallback;
-    try {
-      const parsed = new URL(source);
-      return `${parsed.protocol}//${parsed.host}`;
-    } catch {
-      return fallback;
-    }
+    // Default to api.sunnyhealthai.com for artifact endpoints
+    return 'https://api.sunnyhealthai.com';
   }
 
   private emit<E extends keyof ClientEventMap>(event: E, payload: ClientEventMap[E]) {

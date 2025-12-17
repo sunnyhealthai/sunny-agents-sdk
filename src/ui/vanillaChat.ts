@@ -24,6 +24,9 @@ export interface VanillaChatOptions {
   client?: SunnyAgentsClient;
   config?: SunnyAgentsConfig;
   headerTitle?: string;
+  /**
+   * Placeholder text displayed in the input fields. Defaults to "Ask anything…".
+   */
   placeholder?: string;
   /**
    * If true, will skip server conversation creation (useful for anonymous flows).
@@ -49,8 +52,19 @@ export interface VanillaChatInstance {
 const STYLE_ID = 'sunny-agents-vanilla-style';
 const ARTIFACT_TAG_START = '{art_tag}';
 const ARTIFACT_TAG_END = '{/art_tag}';
+const EXPANDED_DOCTOR_PROFILE_START = '{expanded_doctor_profile}';
+const EXPANDED_DOCTOR_PROFILE_END = '{/expanded_doctor_profile}';
+const MINIMAL_DOCTOR_PROFILE_START = '{minimal_doctor_profile}';
+const MINIMAL_DOCTOR_PROFILE_END = '{/minimal_doctor_profile}';
+const DOCTOR_PROFILE_START = '{doctor_profile}';
+const DOCTOR_PROFILE_END = '{/doctor_profile}';
 
-type ArtifactSegment = { type: 'text'; value: string } | { type: 'artifact'; id: string };
+type ArtifactSegment = 
+  | { type: 'text'; value: string } 
+  | { type: 'artifact'; id: string }
+  | { type: 'expanded_profile'; data: any }
+  | { type: 'minimal_profile'; data: any }
+  | { type: 'legacy_profile'; data: any };
 type ApprovalState = 'approved' | 'rejected';
 
 interface ProviderCardViewModel {
@@ -76,7 +90,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     colors = {},
   } = options;
 
-  const persistedConversationId = getOrCreateConversationId(conversationStorageKey);
+  let persistedConversationId = getOrCreateConversationId(conversationStorageKey);
 
   const client = providedClient ?? new SunnyAgentsClient({
     ...config,
@@ -216,7 +230,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
         bubble.appendChild(approvalBlock);
       }
     } else {
-      const paragraph = createParagraph(message.text || (message.isStreaming ? '…' : ''));
+      const paragraph = createParagraph(message.text || (message.isStreaming ? '…' : ''), false);
       if (paragraph) {
         bubble.appendChild(paragraph);
       }
@@ -229,7 +243,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     const baseText = message.text || (message.isStreaming ? '…' : '');
     const segments = splitArtifactSegments(baseText);
     if (!segments.length) {
-      const paragraph = createParagraph(baseText);
+      const paragraph = createParagraph(baseText, true);
       if (paragraph) {
         container.appendChild(paragraph);
       }
@@ -238,21 +252,88 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
 
     for (const segment of segments) {
       if (segment.type === 'text') {
-        const paragraph = createParagraph(segment.value);
-        if (paragraph) {
-          container.appendChild(paragraph);
+        // Clean up backticks and extra whitespace around artifacts
+        // Remove backticks that appear as formatting artifacts (at line boundaries or standalone)
+        let cleanedText = segment.value
+          .replace(/^`+\s*/gm, '') // Remove leading backticks at start of lines
+          .replace(/\s*`+$/gm, '') // Remove trailing backticks at end of lines
+          .replace(/\n`+\n/g, '\n\n') // Remove backticks on their own lines
+          .replace(/^\s*`+\s*$/gm, '') // Remove lines that are only backticks
+          .trim();
+        
+        if (cleanedText) {
+          const paragraph = createParagraph(cleanedText, true);
+          if (paragraph) {
+            container.appendChild(paragraph);
+          }
         }
       } else if (segment.type === 'artifact') {
         container.appendChild(createProviderCard(segment.id));
+      } else if (segment.type === 'expanded_profile') {
+        container.appendChild(createExpandedProviderCard(segment.data));
+      } else if (segment.type === 'minimal_profile') {
+        container.appendChild(createMinimalProviderCard(segment.data));
+      } else if (segment.type === 'legacy_profile') {
+        container.appendChild(createLegacyProviderCard(segment.data));
       }
     }
   };
 
-  const createParagraph = (text?: string | null) => {
+  const parseMarkdown = (text: string): string => {
+    // Escape HTML to prevent XSS
+    let html = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    
+    // Remove standalone backticks (formatting artifacts)
+    // Remove backticks at start/end of lines and standalone single backticks
+    html = html.replace(/^`+\s*/gm, ''); // Remove leading backticks at start of lines
+    html = html.replace(/\s*`+$/gm, ''); // Remove trailing backticks at end of lines
+    // Remove standalone single backticks (not preceded/followed by another backtick)
+    html = html.replace(/([^`])`([^`])/g, '$1$2'); // Remove single backticks between non-backtick chars
+    html = html.replace(/^`([^`])/gm, '$1'); // Remove leading single backtick
+    html = html.replace(/([^`])`$/gm, '$1'); // Remove trailing single backtick
+    
+    // Parse links: [text](url) - do this first before other formatting
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="sunny-markdown-link">$1</a>');
+    
+    // Parse bold: **text** (handle this before italic to avoid conflicts)
+    // Use a placeholder to avoid conflicts with italic parsing
+    const boldPlaceholders: string[] = [];
+    html = html.replace(/\*\*([^*]+?)\*\*/g, (match, content) => {
+      const placeholder = `__BOLD_${boldPlaceholders.length}__`;
+      boldPlaceholders.push(`<strong class="sunny-markdown-bold">${content}</strong>`);
+      return placeholder;
+    });
+    
+    // Parse italic: *text* (only single asterisks remaining)
+    html = html.replace(/\*([^*\n]+?)\*/g, '<em class="sunny-markdown-italic">$1</em>');
+    
+    // Restore bold placeholders
+    boldPlaceholders.forEach((replacement, index) => {
+      html = html.replace(`__BOLD_${index}__`, replacement);
+    });
+    
+    // Parse line breaks: \n becomes <br>
+    html = html.replace(/\n/g, '<br>');
+    
+    return html;
+  };
+
+  const createParagraph = (text?: string | null, isAssistant: boolean = false) => {
     const trimmed = (text ?? '').trim();
     if (!trimmed) return null;
     const paragraph = document.createElement('p');
-    paragraph.textContent = trimmed;
+    
+    if (isAssistant) {
+      // Parse markdown for assistant messages
+      paragraph.innerHTML = parseMarkdown(trimmed);
+    } else {
+      // Plain text for user messages
+      paragraph.textContent = trimmed;
+    }
+    
     return paragraph;
   };
 
@@ -396,6 +477,50 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
         }
       });
 
+    return card;
+  };
+
+  const createExpandedProviderCard = (data: any) => {
+    const card = document.createElement('div');
+    card.className = 'sunny-provider-card';
+    // Expanded profiles have full data, render directly
+    const profile = normalizeDoctorProfile(data);
+    renderProviderProfile(card, profile);
+    return card;
+  };
+
+  const createMinimalProviderCard = (data: any) => {
+    const card = document.createElement('div');
+    card.className = 'sunny-provider-card';
+
+    if (!data || !data.npi) {
+      card.classList.add('sunny-provider-card--error');
+      const errorEl = document.createElement('div');
+      errorEl.className = 'sunny-provider-card__error';
+      errorEl.textContent = 'Missing provider NPI.';
+      card.appendChild(errorEl);
+      return card;
+    }
+
+    // Minimal profiles have: npi, optional rating/rank_score, optional mrf_rates, optional estimated_oop_cost
+    // Render what we have - the card will show NPI and available fields
+    const profile: ProviderCardViewModel = {
+      name: `NPI ${data.npi}`, // Use NPI as identifier since we don't have name
+      specialty: data.specialty,
+      rating: data.rating || data.rank_score,
+      estimatedOop: data.estimated_oop_cost,
+    };
+    
+    renderProviderProfile(card, profile);
+    return card;
+  };
+
+  const createLegacyProviderCard = (data: any) => {
+    const card = document.createElement('div');
+    card.className = 'sunny-provider-card';
+    // Legacy profiles have full data structure, normalize and render
+    const profile = normalizeDoctorProfile(data);
+    renderProviderProfile(card, profile);
     return card;
   };
 
@@ -544,6 +669,19 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     client.on('snapshot', (snap) => render(snap)),
     client.on('streamingDelta', () => render()),
     client.on('streamingDone', () => render()),
+    client.on('conversationCreated', ({ conversationId }) => {
+      // If server generated a different ID than our persisted one, update localStorage
+      // This happens when authenticated and server creates the conversation
+      if (conversationId !== persistedConversationId && !anonymous) {
+        try {
+          window.localStorage.setItem(conversationStorageKey, conversationId);
+          // Update our local reference for future sends
+          persistedConversationId = conversationId;
+        } catch {
+          // Ignore localStorage errors
+        }
+      }
+    }),
   );
 
   // Kick off render without forcing conversation creation; expand once messages exist
@@ -747,6 +885,28 @@ function ensureStyles() {
   .sunny-chat__bubble p {
     margin: 0;
     line-height: 1.6;
+  }
+  .sunny-chat__bubble p .sunny-markdown-bold {
+    font-weight: 700;
+    color: inherit;
+  }
+  .sunny-chat__bubble p .sunny-markdown-italic {
+    font-style: italic;
+    color: inherit;
+  }
+  .sunny-chat__bubble p .sunny-markdown-link {
+    color: var(--sunny-color-primary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    transition: color var(--sunny-transition-fast);
+  }
+  .sunny-chat__bubble p .sunny-markdown-link:hover {
+    color: var(--sunny-color-primary-hover);
+  }
+  .sunny-chat__bubble p .sunny-markdown-link:focus {
+    outline: 2px solid var(--sunny-color-primary-ring);
+    outline-offset: 2px;
+    border-radius: 2px;
   }
 
   /* Shared Input Styles */
@@ -1100,27 +1260,109 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
   if (!text) return [];
   const segments: ArtifactSegment[] = [];
   let cursor = 0;
-  while (cursor < text.length) {
-    const start = text.indexOf(ARTIFACT_TAG_START, cursor);
-    if (start === -1) {
-      segments.push({ type: 'text', value: text.slice(cursor) });
-      break;
-    }
-    if (start > cursor) {
-      segments.push({ type: 'text', value: text.slice(cursor, start) });
-    }
+  
+  // Find all tag positions
+  type TagMatch = { type: 'artifact' | 'expanded' | 'minimal' | 'legacy'; start: number; end: number; data?: any; id?: string };
+  const tagMatches: TagMatch[] = [];
+  
+  // Find artifact tags
+  let artifactCursor = 0;
+  while (artifactCursor < text.length) {
+    const start = text.indexOf(ARTIFACT_TAG_START, artifactCursor);
+    if (start === -1) break;
     const idStart = start + ARTIFACT_TAG_START.length;
     const end = text.indexOf(ARTIFACT_TAG_END, idStart);
-    if (end === -1) {
-      segments.push({ type: 'text', value: text.slice(start) });
-      break;
-    }
+    if (end === -1) break;
     const id = text.slice(idStart, end).trim().replace(/^["']|["']$/g, '');
     if (id) {
-      segments.push({ type: 'artifact', id });
+      tagMatches.push({ type: 'artifact', start, end: end + ARTIFACT_TAG_END.length, id });
     }
-    cursor = end + ARTIFACT_TAG_END.length;
+    artifactCursor = end + ARTIFACT_TAG_END.length;
   }
+  
+  // Find expanded doctor profile tags
+  let expandedCursor = 0;
+  while (expandedCursor < text.length) {
+    const start = text.indexOf(EXPANDED_DOCTOR_PROFILE_START, expandedCursor);
+    if (start === -1) break;
+    const jsonStart = start + EXPANDED_DOCTOR_PROFILE_START.length;
+    const end = text.indexOf(EXPANDED_DOCTOR_PROFILE_END, jsonStart);
+    if (end === -1) break;
+    const jsonStr = text.slice(jsonStart, end).trim();
+    try {
+      const data = JSON.parse(jsonStr);
+      tagMatches.push({ type: 'expanded', start, end: end + EXPANDED_DOCTOR_PROFILE_END.length, data });
+    } catch {
+      // Invalid JSON, skip
+    }
+    expandedCursor = end + EXPANDED_DOCTOR_PROFILE_END.length;
+  }
+  
+  // Find minimal doctor profile tags
+  let minimalCursor = 0;
+  while (minimalCursor < text.length) {
+    const start = text.indexOf(MINIMAL_DOCTOR_PROFILE_START, minimalCursor);
+    if (start === -1) break;
+    const jsonStart = start + MINIMAL_DOCTOR_PROFILE_START.length;
+    const end = text.indexOf(MINIMAL_DOCTOR_PROFILE_END, jsonStart);
+    if (end === -1) break;
+    const jsonStr = text.slice(jsonStart, end).trim();
+    try {
+      const data = JSON.parse(jsonStr);
+      tagMatches.push({ type: 'minimal', start, end: end + MINIMAL_DOCTOR_PROFILE_END.length, data });
+    } catch {
+      // Invalid JSON, skip
+    }
+    minimalCursor = end + MINIMAL_DOCTOR_PROFILE_END.length;
+  }
+  
+  // Find legacy doctor profile tags
+  let legacyCursor = 0;
+  while (legacyCursor < text.length) {
+    const start = text.indexOf(DOCTOR_PROFILE_START, legacyCursor);
+    if (start === -1) break;
+    const jsonStart = start + DOCTOR_PROFILE_START.length;
+    const end = text.indexOf(DOCTOR_PROFILE_END, jsonStart);
+    if (end === -1) break;
+    const jsonStr = text.slice(jsonStart, end).trim();
+    try {
+      const data = JSON.parse(jsonStr);
+      tagMatches.push({ type: 'legacy', start, end: end + DOCTOR_PROFILE_END.length, data });
+    } catch {
+      // Invalid JSON, skip
+    }
+    legacyCursor = end + DOCTOR_PROFILE_END.length;
+  }
+  
+  // Sort matches by position
+  tagMatches.sort((a, b) => a.start - b.start);
+  
+  // Build segments
+  for (const match of tagMatches) {
+    // Add text before this tag
+    if (match.start > cursor) {
+      segments.push({ type: 'text', value: text.slice(cursor, match.start) });
+    }
+    
+    // Add the profile segment
+    if (match.type === 'artifact' && match.id) {
+      segments.push({ type: 'artifact', id: match.id });
+    } else if (match.type === 'expanded') {
+      segments.push({ type: 'expanded_profile', data: match.data });
+    } else if (match.type === 'minimal') {
+      segments.push({ type: 'minimal_profile', data: match.data });
+    } else if (match.type === 'legacy') {
+      segments.push({ type: 'legacy_profile', data: match.data });
+    }
+    
+    cursor = match.end;
+  }
+  
+  // Add remaining text
+  if (cursor < text.length) {
+    segments.push({ type: 'text', value: text.slice(cursor) });
+  }
+  
   return segments;
 }
 
