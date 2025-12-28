@@ -26,8 +26,8 @@ The easiest way to get started is with the pre-built chat widget:
   const { client, destroy } = attachSunnyChat({
     container: document.getElementById("sunny-chat"),
     config: {
-      websocketUrl: "wss://llm.sunnyhealth.live",
-      authorizeUrl: "https://llm.sunnyhealth.live/authorize",
+      websocketUrl: "wss://chat.api.sunnyhealthai.com",
+      authorizeUrl: "https://chat.api.sunnyhealthai.com/authorize",
       tokenProvider: async () => localStorage.getItem("access_token"),
     },
     headerTitle: "Sunny Agents",
@@ -47,8 +47,8 @@ For custom UI implementations, use the headless client:
 import { SunnyAgentsClient } from "@sunnyhealthai/agents-sdk";
 
 const client = new SunnyAgentsClient({
-  websocketUrl: "wss://llm.sunnyhealth.live",
-  authorizeUrl: "https://llm.sunnyhealth.live/authorize",
+  websocketUrl: "wss://chat.api.sunnyhealthai.com",
+  authorizeUrl: "https://chat.api.sunnyhealthai.com/authorize",
   tokenProvider: async () => localStorage.getItem("access_token"),
 });
 
@@ -77,8 +77,8 @@ When using authenticated mode, provide a `tokenProvider` function that returns a
 
 ```ts
 const client = new SunnyAgentsClient({
-  websocketUrl: "wss://llm.sunnyhealth.live",
-  authorizeUrl: "https://llm.sunnyhealth.live/authorize",
+  websocketUrl: "wss://chat.api.sunnyhealthai.com",
+  authorizeUrl: "https://chat.api.sunnyhealthai.com/authorize",
   tokenProvider: async () => {
     // Return your access token
     return localStorage.getItem("access_token");
@@ -92,8 +92,8 @@ For anonymous/local-only conversations, disable server conversation creation:
 
 ```ts
 const client = new SunnyAgentsClient({
-  websocketUrl: "wss://llm.sunnyhealth.live",
-  authorizeUrl: "https://llm.sunnyhealth.live/authorize",
+  websocketUrl: "wss://chat.api.sunnyhealthai.com",
+  authorizeUrl: "https://chat.api.sunnyhealthai.com/authorize",
   createServerConversations: false, // Anonymous mode
 });
 ```
@@ -104,8 +104,8 @@ Or with the vanilla widget:
 attachSunnyChat({
   container: document.getElementById("sunny-chat"),
   config: {
-    websocketUrl: "wss://llm.sunnyhealth.live",
-    authorizeUrl: "https://llm.sunnyhealth.live/authorize",
+    websocketUrl: "wss://chat.api.sunnyhealthai.com",
+    authorizeUrl: "https://chat.api.sunnyhealthai.com/authorize",
     createServerConversations: false,
   },
   anonymous: true, // Alternative way to enable anonymous mode
