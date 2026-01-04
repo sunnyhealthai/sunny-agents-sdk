@@ -1,17 +1,20 @@
+import { TokenExchangeManager, type TokenExchangeConfig } from './tokenExchange.js';
+
 export interface AuthorizeResponse {
   websocket_url: string;
   session_id: string;
   expires_at: string;
 }
 
-export type TokenProvider = () => Promise<string | null | undefined>;
+export type IdTokenProvider = () => Promise<string | null | undefined>;
 export type MessageHandler = (data: any) => void;
 
 export interface LLMWebSocketConfig {
   websocketUrl?: string;
   authorizeUrl?: string;
   sessionStorageKey?: string;
-  tokenProvider?: TokenProvider;
+  idTokenProvider?: IdTokenProvider;
+  tokenExchange?: TokenExchangeConfig;
 }
 
 // Small, dependency-free WebSocket manager shared by the SDK.
@@ -23,28 +26,55 @@ export class LLMWebSocketManager {
   private reconnectAttempts = 0;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
   private isAnonymous = true;
+  private tokenExchangeManager: TokenExchangeManager | null = null;
   private config: {
     websocketUrl: string;
     authorizeUrl: string;
     sessionStorageKey: string;
-    tokenProvider?: TokenProvider;
+    idTokenProvider?: IdTokenProvider;
+    tokenExchange?: TokenExchangeConfig;
   };
 
   constructor(config?: LLMWebSocketConfig) {
     this.config = {
-      websocketUrl: config?.websocketUrl ?? 'wss://chat.api.sunnyhealthai.com',
-      authorizeUrl: config?.authorizeUrl ?? 'https://chat.api.sunnyhealthai.com/authorize',
+      websocketUrl: config?.websocketUrl ?? 'wss://chat.api.sunnyhealthai-staging.com',
+      authorizeUrl: config?.authorizeUrl ?? 'https://chat.api.sunnyhealthai-staging.com/authorize',
       sessionStorageKey: config?.sessionStorageKey ?? 'sunny_agents_session_id',
-      tokenProvider: config?.tokenProvider,
+      idTokenProvider: config?.idTokenProvider,
+      tokenExchange: config?.tokenExchange,
     };
+
+    // Initialize token exchange manager if both idTokenProvider and tokenExchange are provided
+    if (this.config.idTokenProvider && this.config.tokenExchange) {
+      this.tokenExchangeManager = new TokenExchangeManager(
+        this.config.idTokenProvider,
+        this.config.tokenExchange
+      );
+    }
   }
 
-  setTokenProvider(provider: TokenProvider) {
-    this.config.tokenProvider = provider;
+  setIdTokenProvider(provider: IdTokenProvider) {
+    this.config.idTokenProvider = provider;
+    if (this.config.idTokenProvider && this.config.tokenExchange) {
+      this.tokenExchangeManager = new TokenExchangeManager(
+        this.config.idTokenProvider,
+        this.config.tokenExchange
+      );
+    } else {
+      this.tokenExchangeManager = null;
+    }
   }
 
   getIsAnonymous(): boolean {
     return this.isAnonymous;
+  }
+
+  /**
+   * Gets an access token using token exchange if configured.
+   * Returns null if no token provider is configured or if token exchange fails.
+   */
+  async getAccessToken(): Promise<string | null> {
+    return this.getAccessTokenInternal();
   }
 
   onMessage(handler: MessageHandler): () => void {
@@ -66,7 +96,7 @@ export class LLMWebSocketManager {
 
     this.connecting = (async () => {
       try {
-        const token = await this.getAccessToken();
+        const token = await this.getAccessTokenInternal();
         const { websocketUrl } = this.config;
         let wsUrl = websocketUrl;
 
@@ -175,7 +205,7 @@ export class LLMWebSocketManager {
 
   private async authorizeIfNeeded(): Promise<AuthorizeResponse> {
     if (this.session) return this.session;
-    const token = await this.getAccessToken();
+    const token = await this.getAccessTokenInternal();
     if (!token) {
       throw new Error('Cannot authorize websocket without a token');
     }
@@ -197,10 +227,21 @@ export class LLMWebSocketManager {
     return session;
   }
 
-  private async getAccessToken(): Promise<string | null> {
-    if (!this.config.tokenProvider) return null;
-    const token = await this.config.tokenProvider();
-    return token || null;
+  private async getAccessTokenInternal(): Promise<string | null> {
+    // Use token exchange manager if available
+    if (this.tokenExchangeManager) {
+      try {
+        return await this.tokenExchangeManager.getAccessToken();
+      } catch (error) {
+        // If token exchange fails, return null to fall back to anonymous mode
+        console.error('Token exchange failed:', error);
+        return null;
+      }
+    }
+
+    // Fallback: if idTokenProvider exists but no tokenExchange config, return null
+    // (we don't support direct access tokens anymore)
+    return null;
   }
 }
 

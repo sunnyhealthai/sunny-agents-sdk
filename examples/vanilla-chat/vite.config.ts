@@ -1,5 +1,9 @@
 import { defineConfig } from 'vite';
-import path from 'path';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 export default defineConfig({
   server: {
@@ -9,7 +13,7 @@ export default defineConfig({
   resolve: {
     alias: {
       // Point to source files for hot reload during development
-      '@sunnyhealthai/agents-sdk': path.resolve(__dirname, '../../src/index.ts'),
+      '@sunnyhealthai/agents-sdk': resolve(__dirname, '../../src/index.ts'),
     },
   },
 });

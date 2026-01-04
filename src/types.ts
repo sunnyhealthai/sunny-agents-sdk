@@ -32,19 +32,46 @@ export interface FileAttachment {
 export interface SunnyAgentsConfig {
   websocketUrl?: string;
   authorizeUrl?: string;
-  tokenProvider?: () => Promise<string | null>;
+  /**
+   * Provider function that returns an ID token for token exchange.
+   * The SDK will automatically exchange this ID token for an access token.
+   */
+  idTokenProvider?: () => Promise<string | null>;
   sessionStorageKey?: string;
   initialConversationId?: string;
   /**
    * Base URL for REST API calls (e.g., fetching artifacts). Defaults to
-   * https://api.sunnyhealthai.com.
+   * https://api.sunnyhealthai-staging.com.
    */
   apiBaseUrl?: string;
   /**
    * Whether to create/persist conversations on the server.
-   * Defaults to true if a tokenProvider is supplied, otherwise false (anonymous).
+   * Defaults to true if an idTokenProvider is supplied, otherwise false (anonymous).
    */
   createServerConversations?: boolean;
+  /**
+   * Token exchange configuration for converting ID tokens to access tokens.
+   */
+  tokenExchange?: {
+    /**
+     * Partner name identifier (e.g., "sunny-health-external-mock").
+     * Used to construct the subject_token_type as urn:{partnerName}:id-token
+     */
+    partnerName: string;
+    /**
+     * API audience for the access token (e.g., "https://api.sunnyhealthai-staging.com").
+     */
+    audience: string;
+    /**
+     * Auth0 client ID for token exchange.
+     */
+    clientId: string;
+    /**
+     * Token exchange endpoint URL.
+     * Defaults to https://auth.sunnyhealth.live/oauth/token
+     */
+    tokenExchangeUrl?: string;
+  };
 }
 
 export interface SendMessageOptions {

@@ -98,7 +98,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     createServerConversations:
       typeof config?.createServerConversations === 'boolean'
         ? config.createServerConversations
-        : !anonymous && !!config?.tokenProvider,
+        : !anonymous && !!(config?.idTokenProvider && config?.tokenExchange),
   });
   ensureStyles();
 

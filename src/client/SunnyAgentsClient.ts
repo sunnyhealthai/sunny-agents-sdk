@@ -122,15 +122,16 @@ export class SunnyAgentsClient {
       websocketUrl: config.websocketUrl,
       authorizeUrl: config.authorizeUrl,
       sessionStorageKey: config.sessionStorageKey,
-      tokenProvider: config.tokenProvider,
+      idTokenProvider: config.idTokenProvider,
+      tokenExchange: config.tokenExchange,
     });
     this.apiBaseUrl = this.resolveApiBaseUrl(config);
 
-    // Default to server-created conversations only when we have a token provider.
+    // Default to server-created conversations only when we have an ID token provider.
     this.createServerConversations =
       typeof config.createServerConversations === 'boolean'
         ? config.createServerConversations
-        : !!config.tokenProvider;
+        : !!(config.idTokenProvider && config.tokenExchange);
 
     this.ws.onMessage(this.handleMessage);
 
@@ -177,7 +178,7 @@ export class SunnyAgentsClient {
     let conversationId = this.ensureConversation(options?.conversationId, options?.title);
 
     // In authenticated mode, ensure the conversation exists on the server before sending
-    if (this.shouldCreateServerConversations() && !this.serverCreatedConversations.has(conversationId)) {
+    if (this.createServerConversations && !this.serverCreatedConversations.has(conversationId)) {
       // Create conversation on server first - this may return a different ID if server generates one
       const serverConversationId = await this.createConversation(options?.title ?? null, conversationId);
       // Use the server-provided ID (which may differ from our local ID)
@@ -255,7 +256,7 @@ export class SunnyAgentsClient {
     this.ensureConversation(id, title ?? undefined);
 
     // Only hit the server when explicitly allowed and authenticated.
-    if (this.shouldCreateServerConversations()) {
+    if (this.createServerConversations) {
       // If we're already waiting for this conversation to be created, return that promise
       const existingPromise = this.conversationCreationPromises.get(id);
       if (existingPromise) {
@@ -266,60 +267,61 @@ export class SunnyAgentsClient {
       const creationPromise = (async () => {
         try {
           await this.ws.connect();
-          if (!this.ws.getIsAnonymous()) {
-            // Don't send conversation_id - server generates its own ID
-            // The server will return the ID in conversation.created event
-            await this.ws.send({ type: 'conversation.create', name: title ?? null });
+          // If we're configured for server conversations, attempt to create on server
+          // The server will handle authentication - if we're anonymous, it will fail gracefully
+          // Don't send conversation_id - server generates its own ID
+          // The server will return the ID in conversation.created event
+          await this.ws.send({ type: 'conversation.create', name: title ?? null });
+          
+          // Wait for conversation.created event (with timeout)
+          const serverId = await new Promise<string>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              // Timeout: server didn't respond in time
+              // If we provided an ID, assume it failed and we should use server-generated
+              // For now, reject to indicate creation didn't complete
+              cleanup();
+              // Actually, let's resolve with the local ID and mark it - the server might have created it
+              // but the event was delayed. The sendMessage will handle the error if it doesn't exist.
+              resolve(id);
+            }, 5000); // 5 second timeout
             
-            // Wait for conversation.created event (with timeout)
-            const serverId = await new Promise<string>((resolve, reject) => {
-              const timeout = setTimeout(() => {
-                // Timeout: server didn't respond in time
-                // If we provided an ID, assume it failed and we should use server-generated
-                // For now, reject to indicate creation didn't complete
-                cleanup();
-                // Actually, let's resolve with the local ID and mark it - the server might have created it
-                // but the event was delayed. The sendMessage will handle the error if it doesn't exist.
-                resolve(id);
-              }, 5000); // 5 second timeout
-              
-              const handler = (payload: ClientEventMap['conversationCreated']) => {
-                const createdId = payload.conversationId;
-                cleanup();
-                resolve(createdId);
-              };
-              
-              const cleanup = () => {
-                clearTimeout(timeout);
-                this.off('conversationCreated', handler);
-              };
-              
-              this.on('conversationCreated', handler);
-            });
+            const handler = (payload: ClientEventMap['conversationCreated']) => {
+              const createdId = payload.conversationId;
+              cleanup();
+              resolve(createdId);
+            };
             
-            // Server returned an ID - use it (may differ from our local ID)
-            // Update local conversation if IDs differ
-            if (serverId !== id) {
-              const localConvo = this.conversations.get(id);
-              if (localConvo) {
-                // Move conversation to server ID
-                this.conversations.delete(id);
-                this.conversations.set(serverId, { ...localConvo, id: serverId });
-              }
-              // Update active conversation if it was the one we just created
-              if (this.activeConversationId === id) {
-                this.activeConversationId = serverId;
-              }
+            const cleanup = () => {
+              clearTimeout(timeout);
+              this.off('conversationCreated', handler);
+            };
+            
+            this.on('conversationCreated', handler);
+          });
+          
+          // Server returned an ID - use it (may differ from our local ID)
+          // Update local conversation if IDs differ
+          if (serverId !== id) {
+            const localConvo = this.conversations.get(id);
+            if (localConvo) {
+              // Move conversation to server ID
+              this.conversations.delete(id);
+              this.conversations.set(serverId, { ...localConvo, id: serverId });
             }
-            
-            // Mark as server-created (will be confirmed by conversation.created event handler too)
-            this.serverCreatedConversations.add(serverId);
-            return serverId;
+            // Update active conversation if it was the one we just created
+            if (this.activeConversationId === id) {
+              this.activeConversationId = serverId;
+            }
           }
-        } catch {
+          
+          // Mark as server-created (will be confirmed by conversation.created event handler too)
+          this.serverCreatedConversations.add(serverId);
+          return serverId;
+        } catch (error) {
           // If connection/auth fails, stay local-only.
+          // Return local ID so the conversation can still be used locally
+          return id;
         }
-        return id;
       })();
       
       this.conversationCreationPromises.set(id, creationPromise);
@@ -390,6 +392,7 @@ export class SunnyAgentsClient {
         if (!this.activeConversationId) {
           this.activeConversationId = createdId;
         }
+        this.emit('conversationCreated', { conversationId: createdId, title: title ?? null });
         this.notify();
       }
       return;
@@ -616,13 +619,16 @@ export class SunnyAgentsClient {
   }
 
   private async fetchArtifact<T = unknown>(artifactId: string): Promise<ChatArtifact<T> | null> {
-    if (!this.config.tokenProvider) {
-      throw new Error('A tokenProvider is required to fetch artifacts.');
+    if (!this.config.idTokenProvider || !this.config.tokenExchange) {
+      throw new Error('An idTokenProvider and tokenExchange config are required to fetch artifacts.');
     }
-    const token = await this.config.tokenProvider();
+    
+    // Use the WebSocket manager's token exchange to get an access token
+    const token = await this.ws.getAccessToken();
     if (!token) {
       throw new Error('Unable to fetch artifact without an access token.');
     }
+    
     const response = await fetch(`${this.apiBaseUrl}/v1/chat-artifacts/${artifactId}`, {
       method: 'GET',
       headers: {
@@ -702,16 +708,16 @@ export class SunnyAgentsClient {
   }
 
   private shouldCreateServerConversations(): boolean {
-    // Even if the config says true, skip if websocket is anonymous (tokenProvider returned null).
-    return this.createServerConversations && !this.ws.getIsAnonymous();
+    // Check config flag. The actual anonymous check happens in createConversation after connecting.
+    return this.createServerConversations;
   }
 
   private resolveApiBaseUrl(config: SunnyAgentsConfig = {}): string {
     if (config.apiBaseUrl) {
       return config.apiBaseUrl.replace(/\/$/, '');
     }
-    // Default to api.sunnyhealthai.com for artifact endpoints
-    return 'https://api.sunnyhealthai.com';
+    // Default to api.sunnyhealthai-staging.com for artifact endpoints
+    return 'https://api.sunnyhealthai-staging.com';
   }
 
   private emit<E extends keyof ClientEventMap>(event: E, payload: ClientEventMap[E]) {

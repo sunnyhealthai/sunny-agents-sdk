@@ -26,9 +26,14 @@ The easiest way to get started is with the pre-built chat widget:
   const { client, destroy } = attachSunnyChat({
     container: document.getElementById("sunny-chat"),
     config: {
-      websocketUrl: "wss://chat.api.sunnyhealthai.com",
-      authorizeUrl: "https://chat.api.sunnyhealthai.com/authorize",
-      tokenProvider: async () => localStorage.getItem("access_token"),
+      websocketUrl: "wss://chat.api.sunnyhealthai-staging.com",
+      authorizeUrl: "https://chat.api.sunnyhealthai-staging.com/authorize",
+      idTokenProvider: async () => localStorage.getItem("id_token"),
+      tokenExchange: {
+        partnerName: "your-partner-name",
+        audience: "https://api.sunnyhealthai-staging.com",
+        clientId: "your-client-id",
+      },
     },
     headerTitle: "Sunny Agents",
     placeholder: "Ask anything…",
@@ -47,9 +52,14 @@ For custom UI implementations, use the headless client:
 import { SunnyAgentsClient } from "@sunnyhealthai/agents-sdk";
 
 const client = new SunnyAgentsClient({
-  websocketUrl: "wss://chat.api.sunnyhealthai.com",
-  authorizeUrl: "https://chat.api.sunnyhealthai.com/authorize",
-  tokenProvider: async () => localStorage.getItem("access_token"),
+  websocketUrl: "wss://chat.api.sunnyhealthai-staging.com",
+  authorizeUrl: "https://chat.api.sunnyhealthai-staging.com/authorize",
+  idTokenProvider: async () => localStorage.getItem("id_token"),
+  tokenExchange: {
+    partnerName: "your-partner-name",
+    audience: "https://api.sunnyhealthai-staging.com",
+    clientId: "your-client-id",
+  },
 });
 
 // Listen to events
@@ -73,50 +83,103 @@ await client.sendMessage("Hello, Sunny!");
 
 ### Authenticated Mode
 
-When using authenticated mode, provide a `tokenProvider` function that returns an access token:
+When using authenticated mode, provide an `idTokenProvider` function that returns an ID token, along with `tokenExchange` configuration. The SDK will automatically exchange the ID token for an access token:
 
 ```ts
 const client = new SunnyAgentsClient({
-  websocketUrl: "wss://chat.api.sunnyhealthai.com",
-  authorizeUrl: "https://chat.api.sunnyhealthai.com/authorize",
-  tokenProvider: async () => {
-    // Return your access token
-    return localStorage.getItem("access_token");
+  websocketUrl: "wss://chat.api.sunnyhealthai-staging.com",
+  authorizeUrl: "https://chat.api.sunnyhealthai-staging.com/authorize",
+  idTokenProvider: async () => {
+    // Return your ID token (e.g., from Auth0, Firebase, etc.)
+    return localStorage.getItem("id_token");
+  },
+  tokenExchange: {
+    partnerName: "your-partner-name", // e.g., "sunny-health-external-mock"
+    audience: "https://api.sunnyhealthai-staging.com",
+    clientId: "your-auth0-client-id",
+    tokenExchangeUrl: "https://auth.sunnyhealth.live/oauth/token", // Optional, defaults to this
   },
 });
 ```
 
+**Token Exchange Flow:**
+
+1. Your app provides an ID token via `idTokenProvider`
+2. The SDK exchanges it for an access token using the configured token exchange endpoint
+3. The access token is cached and automatically refreshed when expired
+4. The access token is used to authenticate WebSocket connections and API requests
+
+**Configuration Options:**
+
+- `idTokenProvider`: Function that returns a Promise resolving to an ID token string or null
+- `tokenExchange.partnerName`: Partner identifier used to construct the subject token type (e.g., `"sunny-health-external-mock"`)
+- `tokenExchange.audience`: API audience for the access token (e.g., `"https://api.sunnyhealthai-staging.com"`)
+- `tokenExchange.clientId`: Auth0 client ID for token exchange
+- `tokenExchange.tokenExchangeUrl`: Optional token exchange endpoint URL (defaults to `"https://auth.sunnyhealth.live/oauth/token"`)
+
 ### Anonymous Mode
 
-For anonymous/local-only conversations, disable server conversation creation:
+For anonymous/local-only conversations, omit the `idTokenProvider` and `tokenExchange` configuration. The SDK will automatically operate in anonymous mode:
 
 ```ts
 const client = new SunnyAgentsClient({
-  websocketUrl: "wss://chat.api.sunnyhealthai.com",
-  authorizeUrl: "https://chat.api.sunnyhealthai.com/authorize",
-  createServerConversations: false, // Anonymous mode
+  websocketUrl: "wss://chat.api.sunnyhealthai-staging.com",
+  authorizeUrl: "https://chat.api.sunnyhealthai-staging.com/authorize",
+  // No idTokenProvider or tokenExchange = anonymous mode
 });
 ```
 
-Or with the vanilla widget:
+Or explicitly disable server conversation creation:
+
+```ts
+const client = new SunnyAgentsClient({
+  websocketUrl: "wss://chat.api.sunnyhealthai-staging.com",
+  authorizeUrl: "https://chat.api.sunnyhealthai-staging.com/authorize",
+  createServerConversations: false, // Explicitly disable server persistence
+});
+```
+
+With the vanilla widget, you can use the `anonymous` option:
 
 ```ts
 attachSunnyChat({
   container: document.getElementById("sunny-chat"),
   config: {
-    websocketUrl: "wss://chat.api.sunnyhealthai.com",
-    authorizeUrl: "https://chat.api.sunnyhealthai.com/authorize",
-    createServerConversations: false,
+    websocketUrl: "wss://chat.api.sunnyhealthai-staging.com",
+    authorizeUrl: "https://chat.api.sunnyhealthai-staging.com/authorize",
   },
-  anonymous: true, // Alternative way to enable anonymous mode
+  anonymous: true, // Enables anonymous mode (same as omitting idTokenProvider)
 });
 ```
+
+**Note:** `createServerConversations` defaults to `true` if both `idTokenProvider` and `tokenExchange` are provided, otherwise `false`. The `anonymous` option in `attachSunnyChat` sets `createServerConversations: false` when no token provider is configured.
 
 ## API Reference
 
 ### SunnyAgentsClient
 
 The headless client for building custom chat UIs.
+
+#### Constructor Options
+
+```ts
+new SunnyAgentsClient(config?: SunnyAgentsConfig)
+```
+
+**Configuration Options (`SunnyAgentsConfig`):**
+
+- `websocketUrl?: string` - WebSocket URL for chat connection (defaults to `"wss://chat.api.sunnyhealthai-staging.com"`)
+- `authorizeUrl?: string` - Authorization endpoint URL (defaults to `"https://chat.api.sunnyhealthai-staging.com/authorize"`)
+- `idTokenProvider?: () => Promise<string | null>` - Function that returns an ID token for token exchange
+- `tokenExchange?: TokenExchangeConfig` - Token exchange configuration (required if using `idTokenProvider`)
+  - `partnerName: string` - Partner identifier (e.g., `"sunny-health-external-mock"`)
+  - `audience: string` - API audience for access token (e.g., `"https://api.sunnyhealthai-staging.com"`)
+  - `clientId: string` - Auth0 client ID for token exchange
+  - `tokenExchangeUrl?: string` - Token exchange endpoint (defaults to `"https://auth.sunnyhealth.live/oauth/token"`)
+- `apiBaseUrl?: string` - Base URL for REST API calls like artifact fetching (defaults to `"https://api.sunnyhealthai-staging.com"`)
+- `sessionStorageKey?: string` - localStorage key for session persistence (defaults to `"sunny_agents_session_id"`)
+- `initialConversationId?: string` - Initial conversation ID to use
+- `createServerConversations?: boolean` - Whether to create/persist conversations on server (defaults to `true` if `idTokenProvider` and `tokenExchange` are provided, otherwise `false`)
 
 #### Methods
 
@@ -127,14 +190,20 @@ The headless client for building custom chat UIs.
   - `options.files`: Array of file attachments (base64 encoded)
   - `options.onMessageCreated`: Callback when message is created
 
-- **`createConversation(title?: string)`**: Create a new conversation
+- **`createConversation(title?: string | null, conversationId?: string | null)`**: Create a new conversation. Returns a Promise resolving to the conversation ID.
 
-- **`getSnapshot()`**: Get current state snapshot
+- **`setActiveConversation(conversationId: string | null)`**: Set the active conversation ID.
 
-- **`on(event, handler)`**: Subscribe to events
+- **`getSnapshot()`**: Get current state snapshot. Returns `SunnyAgentsClientSnapshot` with `conversations` array and `activeConversationId`.
+
+- **`getArtifact<T>(artifactId: string)`**: Fetch a chat artifact by ID. Returns a Promise resolving to `ChatArtifact<T> | null`. Requires authenticated mode (`idTokenProvider` and `tokenExchange`).
+
+- **`sendMcpApproval(conversationId: string, approvalRequestId: string, approve: boolean, reason?: string | null)`**: Send an MCP approval response for a pending approval request.
+
+- **`on(event, handler)`**: Subscribe to events. Returns an unsubscribe function.
 - **`off(event, handler)`**: Unsubscribe from events
 
-- **`subscribe(fn)`**: Subscribe to all state changes with a single callback
+- **`subscribe(fn)`**: Subscribe to all state changes with a single callback. Returns an unsubscribe function.
 
 #### Events
 
@@ -152,17 +221,21 @@ Mount a ready-to-use chat widget.
 #### Options
 
 - `container`: HTMLElement to mount the chat widget
-- `config`: SunnyAgentsConfig (same as SunnyAgentsClient)
-- `headerTitle`: Title displayed in the chat header
-- `placeholder`: Input placeholder text
-- `anonymous`: Enable anonymous mode (alternative to `config.createServerConversations: false`)
-- `conversationStorageKey`: localStorage key for persisting conversation ID (default: `"sunny_agents_conversation_id"`)
-- `colors`: Custom theme colors (`primary`, `secondary`, `accent`)
+- `client?: SunnyAgentsClient` - Optional pre-configured client instance. If not provided, a new client will be created from `config`.
+- `config?: SunnyAgentsConfig` - Configuration for creating a new client (same as `SunnyAgentsClient` constructor options). Ignored if `client` is provided.
+- `headerTitle?: string` - Title displayed in the chat header (default: `"Sunny Agents"`)
+- `placeholder?: string` - Input placeholder text (default: `"Ask anything…"`)
+- `anonymous?: boolean` - Enable anonymous mode. Sets `createServerConversations: false` when no token provider is configured (default: `false`)
+- `conversationStorageKey?: string` - localStorage key for persisting conversation ID (default: `"sunny_agents_conversation_id"`)
+- `colors?: VanillaChatColors` - Custom theme colors
+  - `primary?: string` - Primary color for user messages, send button, and focus states (default: `"#006fff"`)
+  - `secondary?: string` - Secondary color for text and UI elements (default: `"#212124"`)
+  - `accent?: string` - Accent color for success states and highlights (default: `"#22c55e"`)
 
 #### Returns
 
-- `client`: The underlying SunnyAgentsClient instance
-- `destroy()`: Cleanup function to unmount the widget
+- `client`: The underlying `SunnyAgentsClient` instance
+- `destroy()`: Cleanup function to unmount the widget and clean up event listeners
 
 ## File Uploads
 
@@ -179,6 +252,26 @@ await client.sendMessage("Analyze this image", {
 });
 ```
 
+## Artifact Fetching
+
+The SDK supports fetching chat artifacts (like doctor profiles) that are referenced in messages. Artifacts are automatically cached and can be fetched using the `getArtifact` method:
+
+```ts
+// Fetch an artifact by ID
+const artifact = await client.getArtifact<DoctorProfileArtifact>(
+  "artifact-id-here"
+);
+
+if (artifact) {
+  console.log("Artifact type:", artifact.item_type);
+  console.log("Content:", artifact.item_content);
+}
+```
+
+**Note:** Artifact fetching requires authenticated mode (`idTokenProvider` and `tokenExchange` configuration). The SDK uses the `apiBaseUrl` configuration option (defaults to `"https://api.sunnyhealthai-staging.com"`) to construct artifact fetch URLs.
+
+Artifacts are automatically cached, so subsequent calls with the same artifact ID will return the cached result without making another network request.
+
 ## Framework Integration
 
 This SDK has no framework dependencies. You can use it with:
@@ -190,13 +283,21 @@ This SDK has no framework dependencies. You can use it with:
 
 ## TypeScript Support
 
-This package includes full TypeScript definitions. Import types as needed:
+This package includes full TypeScript definitions. Import types and classes as needed:
 
 ```ts
-import type {
-  SunnyAgentsClient,
-  ConversationState,
-  SunnyAgentMessage,
-  SunnyAgentsConfig,
+import {
+  SunnyAgentsClient, // Class, not a type
+  attachSunnyChat,
+  type ConversationState,
+  type SunnyAgentMessage,
+  type SunnyAgentsConfig,
+  type SendMessageOptions,
+  type SunnyAgentsClientSnapshot,
+  type ChatArtifact,
+  type DoctorProfileArtifact,
+  type VanillaChatOptions,
+  type VanillaChatInstance,
+  type VanillaChatColors,
 } from "@sunnyhealthai/agents-sdk";
 ```
