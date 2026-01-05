@@ -50,8 +50,6 @@ export interface VanillaChatInstance {
 }
 
 const STYLE_ID = 'sunny-agents-vanilla-style';
-const ARTIFACT_TAG_START = '{art_tag}';
-const ARTIFACT_TAG_END = '{/art_tag}';
 const EXPANDED_DOCTOR_PROFILE_START = '{expanded_doctor_profile}';
 const EXPANDED_DOCTOR_PROFILE_END = '{/expanded_doctor_profile}';
 const MINIMAL_DOCTOR_PROFILE_START = '{minimal_doctor_profile}';
@@ -61,7 +59,6 @@ const DOCTOR_PROFILE_END = '{/doctor_profile}';
 
 type ArtifactSegment = 
   | { type: 'text'; value: string } 
-  | { type: 'artifact'; id: string }
   | { type: 'expanded_profile'; data: any }
   | { type: 'minimal_profile'; data: any }
   | { type: 'legacy_profile'; data: any };
@@ -267,8 +264,6 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
             container.appendChild(paragraph);
           }
         }
-      } else if (segment.type === 'artifact') {
-        container.appendChild(createProviderCard(segment.id));
       } else if (segment.type === 'expanded_profile') {
         container.appendChild(createExpandedProviderCard(segment.data));
       } else if (segment.type === 'minimal_profile') {
@@ -443,43 +438,6 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     return card;
   };
 
-  const createProviderCard = (artifactId: string) => {
-    const card = document.createElement('div');
-    card.className = 'sunny-provider-card sunny-provider-card--loading';
-    const placeholder = document.createElement('div');
-    placeholder.className = 'sunny-provider-card__loading';
-    placeholder.textContent = 'Fetching provider details…';
-    card.appendChild(placeholder);
-
-    if (!artifactId) {
-      card.classList.remove('sunny-provider-card--loading');
-      placeholder.textContent = 'Missing provider reference.';
-      return card;
-    }
-
-    void client
-      .getArtifact<DoctorProfileArtifact>(artifactId)
-      .then((artifact) => {
-        if (!artifact) {
-          throw new Error('Provider details are unavailable.');
-        }
-        const profile = normalizeDoctorProfile(artifact.item_content || (artifact as any).content);
-        renderProviderProfile(card, profile);
-      })
-      .catch((err: unknown) => {
-        card.classList.remove('sunny-provider-card--loading');
-        card.classList.add('sunny-provider-card--error');
-        if (err instanceof Error && /token/i.test(err.message)) {
-          placeholder.textContent = 'Sign in required to view provider details.';
-        } else {
-          placeholder.textContent =
-            err instanceof Error ? err.message : 'Unable to load provider details.';
-        }
-      });
-
-    return card;
-  };
-
   const createExpandedProviderCard = (data: any) => {
     const card = document.createElement('div');
     card.className = 'sunny-provider-card';
@@ -495,10 +453,13 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
 
     if (!data || !data.npi) {
       card.classList.add('sunny-provider-card--error');
-      const errorEl = document.createElement('div');
-      errorEl.className = 'sunny-provider-card__error';
-      errorEl.textContent = 'Missing provider NPI.';
-      card.appendChild(errorEl);
+      const errorTitle = document.createElement('div');
+      errorTitle.className = 'sunny-provider-card__error-title';
+      errorTitle.textContent = 'Failed to load provider information';
+      const errorMessage = document.createElement('div');
+      errorMessage.className = 'sunny-provider-card__error-message';
+      errorMessage.textContent = 'Missing provider NPI.';
+      card.append(errorTitle, errorMessage);
       return card;
     }
 
@@ -528,6 +489,23 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     card.classList.remove('sunny-provider-card--loading', 'sunny-provider-card--error');
     card.innerHTML = '';
 
+    const content = document.createElement('div');
+    content.className = 'sunny-provider-card__content';
+
+    // Avatar placeholder
+    const avatar = document.createElement('div');
+    avatar.className = 'sunny-provider-card__avatar';
+    const initials = profile.name
+      .split(' ')
+      .map(n => n[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+    avatar.textContent = initials || '?';
+
+    const info = document.createElement('div');
+    info.className = 'sunny-provider-card__info';
+
     const header = document.createElement('div');
     header.className = 'sunny-provider-card__header';
 
@@ -541,25 +519,76 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
 
     header.append(nameEl, specialtyEl);
 
-    if (profile.rating) {
-      const ratingEl = document.createElement('div');
-      ratingEl.className = 'sunny-provider-card__rating';
-      const reviewSuffix = profile.reviewCount ? ` • ${profile.reviewCount} reviews` : '';
-      ratingEl.textContent = `${profile.rating.toFixed(1)}${reviewSuffix}`;
-      header.appendChild(ratingEl);
-    }
-
     const meta = document.createElement('ul');
     meta.className = 'sunny-provider-card__meta';
-    addMetaRow(meta, 'Location', profile.location);
-    addMetaRow(meta, 'Phone', profile.phone);
-    addMetaRow(meta, 'Languages', profile.languages && profile.languages.length ? profile.languages.join(', ') : undefined);
-    addMetaRow(meta, 'Estimated cost', profile.estimatedOop !== undefined ? formatCurrency(profile.estimatedOop) : undefined);
 
-    card.append(header);
-    if (meta.children.length > 0) {
-      card.append(meta);
+    if (profile.location) {
+      const locationItem = document.createElement('li');
+      locationItem.className = 'sunny-provider-card__meta-item';
+      const locationLabel = document.createElement('span');
+      locationLabel.className = 'sunny-provider-card__meta-label';
+      locationLabel.textContent = 'Location:';
+      const locationValue = document.createElement('span');
+      locationValue.className = 'sunny-provider-card__meta-value';
+      locationValue.textContent = profile.location;
+      locationItem.append(locationLabel, locationValue);
+      meta.appendChild(locationItem);
     }
+
+    if (profile.phone) {
+      const phoneItem = document.createElement('li');
+      phoneItem.className = 'sunny-provider-card__meta-item';
+      const phoneLabel = document.createElement('span');
+      phoneLabel.className = 'sunny-provider-card__meta-label';
+      phoneLabel.textContent = 'Phone:';
+      const phoneValue = document.createElement('span');
+      phoneValue.className = 'sunny-provider-card__meta-value';
+      phoneValue.textContent = profile.phone;
+      phoneItem.append(phoneLabel, phoneValue);
+      meta.appendChild(phoneItem);
+    }
+
+    if (profile.languages && profile.languages.length > 0) {
+      const languagesItem = document.createElement('li');
+      languagesItem.className = 'sunny-provider-card__meta-item';
+      const languagesLabel = document.createElement('span');
+      languagesLabel.className = 'sunny-provider-card__meta-label';
+      languagesLabel.textContent = 'Languages:';
+      const languagesContainer = document.createElement('div');
+      languagesContainer.className = 'sunny-provider-card__meta-value';
+      const languagesTags = document.createElement('div');
+      languagesTags.className = 'sunny-provider-card__languages';
+      profile.languages.forEach(lang => {
+        const tag = document.createElement('span');
+        tag.className = 'sunny-provider-card__language-tag';
+        tag.textContent = lang;
+        languagesTags.appendChild(tag);
+      });
+      languagesContainer.appendChild(languagesTags);
+      languagesItem.append(languagesLabel, languagesContainer);
+      meta.appendChild(languagesItem);
+    }
+
+    if (profile.estimatedOop !== undefined) {
+      const costItem = document.createElement('li');
+      costItem.className = 'sunny-provider-card__meta-item';
+      const costLabel = document.createElement('span');
+      costLabel.className = 'sunny-provider-card__meta-label';
+      costLabel.textContent = 'Est. Cost:';
+      const costValue = document.createElement('span');
+      costValue.className = 'sunny-provider-card__meta-value';
+      costValue.textContent = formatCurrency(profile.estimatedOop);
+      costItem.append(costLabel, costValue);
+      meta.appendChild(costItem);
+    }
+
+    info.append(header);
+    if (meta.children.length > 0) {
+      info.appendChild(meta);
+    }
+
+    content.append(avatar, info);
+    card.appendChild(content);
   };
 
   const addMetaRow = (list: HTMLElement, label: string, value?: string) => {
@@ -782,9 +811,9 @@ function ensureStyles() {
   /* Modal Container */
   .sunny-chat-modal {
     position: relative;
-    width: 794px;
+    width: 1390px;
     max-width: calc(100vw - 32px);
-    height: 560px;
+    height: 980px;
     max-height: calc(100vh - 64px);
     background: #fff;
     border-radius: 12px;
@@ -1014,68 +1043,174 @@ function ensureStyles() {
 
   /* Provider Card */
   .sunny-provider-card {
-    border: 1px solid var(--sunny-gray-200);
+    margin: 12px 0;
+    border: 1px solid rgba(14, 165, 233, 0.2);
     border-radius: 12px;
-    padding: 18px;
-    background: #fff;
+    padding: 16px;
+    background: linear-gradient(to bottom right, rgba(240, 249, 255, 1), rgba(239, 246, 255, 1));
     box-shadow: var(--sunny-shadow-sm);
+    transition: box-shadow var(--sunny-transition-normal), border-color var(--sunny-transition-normal);
   }
-  .sunny-provider-card--loading,
-  .sunny-approval-card--busy {
-    opacity: 0.7;
+  .sunny-provider-card:hover {
+    box-shadow: var(--sunny-shadow-md);
+    border-color: rgba(14, 165, 233, 0.3);
+  }
+  .sunny-provider-card--loading {
+    opacity: 1;
+  }
+  .sunny-provider-card--error {
+    background: linear-gradient(to bottom right, rgba(254, 242, 242, 1), rgba(254, 242, 242, 0.8));
+    border-color: rgba(239, 68, 68, 0.3);
+  }
+  .sunny-provider-card__content {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .sunny-provider-card__avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: rgba(14, 165, 233, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    color: rgba(14, 165, 233, 0.6);
+    font-size: 20px;
+    font-weight: 600;
+  }
+  .sunny-provider-card__info {
+    flex: 1;
+    min-width: 0;
   }
   .sunny-provider-card__header {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
     align-items: baseline;
-    margin-bottom: 14px;
+    margin-bottom: 8px;
   }
   .sunny-provider-card__name {
     font-weight: 700;
     font-size: 16px;
     color: var(--sunny-color-secondary);
+    line-height: 1.4;
   }
-  .sunny-provider-card__specialty,
-  .sunny-provider-card__loading,
-  .sunny-provider-card__error,
-  .sunny-approval-card__label {
+  .sunny-provider-card__specialty {
     font-size: 14px;
     color: var(--sunny-gray-500);
-  }
-  .sunny-approval-card__label {
-    font-size: 13px;
-  }
-  .sunny-provider-card__rating {
-    margin-left: auto;
-    font-size: 13px;
-    color: #f59e0b;
-    font-weight: 600;
+    line-height: 1.4;
   }
   .sunny-provider-card__meta {
     list-style: none;
-    margin: 0;
+    margin: 12px 0 0 0;
     padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .sunny-provider-card__meta-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .sunny-provider-card__meta-label {
+    font-size: 12px;
+    color: var(--sunny-gray-500);
+    font-weight: 500;
+    min-width: 60px;
+  }
+  .sunny-provider-card__meta-value {
+    font-size: 14px;
+    color: var(--sunny-color-secondary);
+    flex: 1;
+  }
+  .sunny-provider-card__languages {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .sunny-provider-card__language-tag {
+    display: inline-block;
+    padding: 2px 8px;
+    background: rgba(14, 165, 233, 0.1);
+    border: 1px solid rgba(14, 165, 233, 0.2);
+    border-radius: 4px;
+    font-size: 12px;
+    color: rgba(14, 165, 233, 0.8);
+    font-weight: 500;
+  }
+  .sunny-provider-card__loading {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .sunny-provider-card__loading-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: rgba(14, 165, 233, 0.2);
+    flex-shrink: 0;
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+  .sunny-provider-card__loading-content {
+    flex: 1;
     display: flex;
     flex-direction: column;
     gap: 8px;
   }
-  .sunny-provider-card__meta-label {
-    display: block;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--sunny-gray-500);
+  .sunny-provider-card__loading-line {
+    height: 16px;
+    background: rgba(14, 165, 233, 0.2);
+    border-radius: 4px;
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+  .sunny-provider-card__loading-line--short {
+    width: 75%;
+  }
+  .sunny-provider-card__loading-line--medium {
+    width: 50%;
+  }
+  .sunny-provider-card__loading-line--long {
+    width: 100%;
+  }
+  .sunny-provider-card__loading-text {
+    font-size: 12px;
+    color: rgba(14, 165, 233, 0.6);
+    text-align: center;
+    margin-top: 8px;
+    opacity: 0.75;
+  }
+  @keyframes pulse {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
+  .sunny-provider-card__error {
+    padding: 16px;
+  }
+  .sunny-provider-card__error-title {
     font-weight: 600;
+    font-size: 15px;
+    color: #991b1b;
+    margin-bottom: 4px;
   }
-  .sunny-provider-card__meta-value {
-    display: block;
+  .sunny-provider-card__error-message {
     font-size: 14px;
-    color: var(--sunny-color-secondary);
-    margin-top: 2px;
+    color: #991b1b;
+    margin-bottom: 8px;
   }
-  .sunny-provider-card--error .sunny-provider-card__loading {
-    color: var(--sunny-color-danger);
+  .sunny-provider-card__error-id {
+    font-size: 12px;
+    color: #991b1b;
+    opacity: 0.75;
   }
 
   /* Approval Cards */
@@ -1262,22 +1397,70 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
   let cursor = 0;
   
   // Find all tag positions
-  type TagMatch = { type: 'artifact' | 'expanded' | 'minimal' | 'legacy'; start: number; end: number; data?: any; id?: string };
+  type TagMatch = { type: 'expanded' | 'minimal' | 'legacy'; start: number; end: number; data?: any };
   const tagMatches: TagMatch[] = [];
   
-  // Find artifact tags
-  let artifactCursor = 0;
-  while (artifactCursor < text.length) {
-    const start = text.indexOf(ARTIFACT_TAG_START, artifactCursor);
+  // Find raw JSON doctor profile objects (ChatArtifact format with item_type: "doctor_profile")
+  // These appear as raw JSON objects in the text, e.g., {"item_type":"doctor_profile","item_content":{...}}
+  let jsonCursor = 0;
+  while (jsonCursor < text.length) {
+    // Look for JSON object start
+    const start = text.indexOf('{', jsonCursor);
     if (start === -1) break;
-    const idStart = start + ARTIFACT_TAG_START.length;
-    const end = text.indexOf(ARTIFACT_TAG_END, idStart);
-    if (end === -1) break;
-    const id = text.slice(idStart, end).trim().replace(/^["']|["']$/g, '');
-    if (id) {
-      tagMatches.push({ type: 'artifact', start, end: end + ARTIFACT_TAG_END.length, id });
+    
+    // Try to find the matching closing brace by counting braces
+    let braceCount = 0;
+    let end = start;
+    let inString = false;
+    let escapeNext = false;
+    
+    for (let i = start; i < text.length; i++) {
+      const char = text[i];
+      
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+      
+      if (char === '\\') {
+        escapeNext = true;
+        continue;
+      }
+      
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+      
+      if (inString) continue;
+      
+      if (char === '{') {
+        braceCount++;
+      } else if (char === '}') {
+        braceCount--;
+        if (braceCount === 0) {
+          end = i + 1;
+          break;
+        }
+      }
     }
-    artifactCursor = end + ARTIFACT_TAG_END.length;
+    
+    if (braceCount === 0 && end > start) {
+      // Found a complete JSON object, try to parse it
+      const jsonStr = text.slice(start, end).trim();
+      try {
+        const artifact = JSON.parse(jsonStr);
+        // Check if it's a doctor profile artifact (item_type can appear anywhere in the object)
+        if (artifact && typeof artifact === 'object' && artifact.item_type === 'doctor_profile' && artifact.item_content) {
+          // Extract item_content and create a legacy profile segment
+          tagMatches.push({ type: 'legacy', start, end, data: artifact.item_content });
+        }
+      } catch {
+        // Invalid JSON, skip
+      }
+    }
+    
+    jsonCursor = end > start ? end : start + 1;
   }
   
   // Find expanded doctor profile tags
@@ -1345,9 +1528,7 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
     }
     
     // Add the profile segment
-    if (match.type === 'artifact' && match.id) {
-      segments.push({ type: 'artifact', id: match.id });
-    } else if (match.type === 'expanded') {
+    if (match.type === 'expanded') {
       segments.push({ type: 'expanded_profile', data: match.data });
     } else if (match.type === 'minimal') {
       segments.push({ type: 'minimal_profile', data: match.data });
