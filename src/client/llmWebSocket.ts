@@ -15,6 +15,7 @@ export interface LLMWebSocketConfig {
   sessionStorageKey?: string;
   idTokenProvider?: IdTokenProvider;
   tokenExchange?: TokenExchangeConfig;
+  partnerName?: string;
 }
 
 // Small, dependency-free WebSocket manager shared by the SDK.
@@ -33,6 +34,7 @@ export class LLMWebSocketManager {
     sessionStorageKey: string;
     idTokenProvider?: IdTokenProvider;
     tokenExchange?: TokenExchangeConfig;
+    partnerName?: string;
   };
 
   constructor(config?: LLMWebSocketConfig) {
@@ -42,6 +44,7 @@ export class LLMWebSocketManager {
       sessionStorageKey: config?.sessionStorageKey ?? 'sunny_agents_session_id',
       idTokenProvider: config?.idTokenProvider,
       tokenExchange: config?.tokenExchange,
+      partnerName: config?.partnerName,
     };
 
     // Initialize token exchange manager if both idTokenProvider and tokenExchange are provided
@@ -108,12 +111,18 @@ export class LLMWebSocketManager {
           url.protocol = 'wss:';
           url.searchParams.set('session_id', session.session_id);
           url.searchParams.set('access_token', `Bearer ${token}`);
+          if (this.config.partnerName) {
+            url.searchParams.set('partner', this.config.partnerName);
+          }
           wsUrl = url.toString();
         } else {
           this.isAnonymous = true;
           const url = new URL('/ws', websocketUrl);
           url.protocol = 'wss:';
           url.searchParams.set('session_id', this.getAnonymousSessionId());
+          if (this.config.partnerName) {
+            url.searchParams.set('partner', this.config.partnerName);
+          }
           wsUrl = url.toString();
         }
 
@@ -210,12 +219,18 @@ export class LLMWebSocketManager {
       throw new Error('Cannot authorize websocket without a token');
     }
 
+    const headers: Record<string, string> = {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+
+    if (this.config.partnerName) {
+      headers['x-sunny-partner-identifier'] = this.config.partnerName;
+    }
+
     const response = await fetch(this.config.authorizeUrl, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
+      headers,
     });
 
     if (!response.ok) {

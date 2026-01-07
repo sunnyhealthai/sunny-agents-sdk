@@ -124,6 +124,7 @@ export class SunnyAgentsClient {
       sessionStorageKey: config.sessionStorageKey,
       idTokenProvider: config.idTokenProvider,
       tokenExchange: config.tokenExchange,
+      partnerName: config.tokenExchange?.partnerName,
     });
     this.apiBaseUrl = this.resolveApiBaseUrl(config);
 
@@ -629,12 +630,18 @@ export class SunnyAgentsClient {
       throw new Error('Unable to fetch artifact without an access token.');
     }
     
+    const headers: Record<string, string> = {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    };
+
+    if (this.config.tokenExchange?.partnerName) {
+      headers['x-sunny-partner-identifier'] = this.config.tokenExchange.partnerName;
+    }
+
     const response = await fetch(`${this.apiBaseUrl}/v1/chat-artifacts/${artifactId}`, {
       method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
+      headers,
     });
     if (!response.ok) {
       throw new Error(`Artifact request failed: ${response.status}`);
