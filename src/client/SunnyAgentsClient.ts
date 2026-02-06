@@ -68,6 +68,9 @@ interface OutputEvent {
   part?: { type?: string; text?: string };
   responses?: Array<{ text?: string; is_profile_prompt?: boolean }>;
   messages?: Array<any>;
+  old_conversation_id?: string;
+  new_conversation_id?: string;
+  conversation?: any;
 }
 
 function nowIso(): string {
@@ -116,11 +119,12 @@ export class SunnyAgentsClient {
   private readonly artifactRequestCache = new Map<string, Promise<ChatArtifact | null>>();
   private readonly serverCreatedConversations = new Set<string>();
   private readonly conversationCreationPromises = new Map<string, Promise<string>>();
+  private readonly migratedConversationIds = new Map<string, string>(); // Maps old ID -> new ID
 
   constructor(private readonly config: SunnyAgentsConfig = {}) {
-    this.ws = new LLMWebSocketManager({
+    // Use provided wsManager or create a new one
+    this.ws = config.wsManager ?? new LLMWebSocketManager({
       websocketUrl: config.websocketUrl,
-      authorizeUrl: config.authorizeUrl,
       sessionStorageKey: config.sessionStorageKey,
       idTokenProvider: config.idTokenProvider,
       tokenExchange: config.tokenExchange,
@@ -175,8 +179,49 @@ export class SunnyAgentsClient {
     this.notify();
   }
 
+  /**
+   * Updates the ID token provider for authentication.
+   * This allows updating authentication after the client has been initialized.
+   */
+  setIdTokenProvider(provider: (() => Promise<string | null>) | undefined) {
+    if (provider) {
+      this.ws.setIdTokenProvider(provider);
+      // If we have token exchange config, it will be handled by the ws manager
+    } else {
+      // Clear the token provider by providing a function that returns null
+      this.ws.setIdTokenProvider(async () => null);
+    }
+  }
+
+  // Ensure WebSocket is connected and authenticated (if configured)
+  private async ensureConnectionAndAuth(): Promise<void> {
+    try {
+      await this.ws.connect();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown connection error';
+      console.error('[SunnyAgentsClient] Failed to connect WebSocket:', errorMessage);
+      throw new Error(`Failed to connect to chat service: ${errorMessage}`);
+    }
+    // Attempt to upgrade auth if we have a token provider configured
+    // This is idempotent - if already authenticated, it will return early
+    if (this.config.idTokenProvider && this.config.tokenExchange) {
+      await this.ws.upgradeAuthIfPossible(false).catch((err) => {
+        // Log but don't throw - allow anonymous operation
+        console.warn('[SunnyAgentsClient] Auth upgrade failed, continuing as anonymous:', err);
+      });
+    }
+  }
+
   async sendMessage(message: string, options?: SendMessageOptions): Promise<{ conversationId: string }> {
     let conversationId = this.ensureConversation(options?.conversationId, options?.title);
+    
+    // Log for debugging migration issues
+    if (options?.conversationId && options.conversationId !== conversationId) {
+      console.log('[SunnyAgentsClient] Resolved migrated conversation ID:', { 
+        original: options.conversationId, 
+        resolved: conversationId 
+      });
+    }
 
     // In authenticated mode, ensure the conversation exists on the server before sending
     if (this.createServerConversations && !this.serverCreatedConversations.has(conversationId)) {
@@ -211,6 +256,9 @@ export class SunnyAgentsClient {
       outputItems: [],
     });
 
+    // Ensure connection and auth before sending
+    await this.ensureConnectionAndAuth();
+
     const payload: ChatPayload = {
       type: 'chat',
       conversation_id: conversationId,
@@ -226,6 +274,10 @@ export class SunnyAgentsClient {
 
   async sendMcpApproval(conversationId: string, approvalRequestId: string, approve: boolean, reason?: string | null): Promise<void> {
     const ensuredId = this.ensureConversation(conversationId);
+    
+    // Ensure connection and auth before sending
+    await this.ensureConnectionAndAuth();
+    
     const responseItem: McpApprovalResponseItem = {
       type: 'mcp_approval_response',
       approval_request_id: approvalRequestId,
@@ -267,7 +319,8 @@ export class SunnyAgentsClient {
       // Create a promise that resolves when the conversation is created on the server
       const creationPromise = (async () => {
         try {
-          await this.ws.connect();
+          // Ensure connection and auth before creating conversation
+          await this.ensureConnectionAndAuth();
           // If we're configured for server conversations, attempt to create on server
           // The server will handle authentication - if we're anonymous, it will fail gracefully
           // Don't send conversation_id - server generates its own ID
@@ -365,24 +418,114 @@ export class SunnyAgentsClient {
     };
   }
 
+  /**
+   * Resolves a conversation ID, mapping old migrated IDs to new ones if applicable.
+   */
+  private resolveConversationId(conversationId: string | null | undefined): string {
+    if (!conversationId) {
+      return generateUuid();
+    }
+    // Check if this ID has been migrated to a new ID
+    return this.migratedConversationIds.get(conversationId) ?? conversationId;
+  }
+
   private ensureConversation(conversationId?: string | null, title?: string | null): string {
-    const id = conversationId ?? generateUuid();
-    if (!this.conversations.has(id)) {
-      this.conversations.set(id, {
-        id,
+    // Resolve migrated IDs first
+    const resolvedId = this.resolveConversationId(conversationId);
+    if (!this.conversations.has(resolvedId)) {
+      this.conversations.set(resolvedId, {
+        id: resolvedId,
         title: title ?? null,
         messages: [],
         quickResponses: [],
       });
-      this.emit('conversationCreated', { conversationId: id, title: title ?? null });
+      this.emit('conversationCreated', { conversationId: resolvedId, title: title ?? null });
     }
-    return id;
+    return resolvedId;
   }
 
   private handleMessage = async (raw: any) => {
     const data = raw as OutputEvent;
     const type = data.type;
     const conversationId = data.conversation_id;
+
+    if (type === 'conversation.migrated') {
+      const oldId = (raw as any).old_conversation_id || data.old_conversation_id;
+      const newId = (raw as any).new_conversation_id || data.new_conversation_id;
+      const conversationData = (raw as any).conversation || data.conversation;
+
+      console.log('[SunnyAgentsClient] Received conversation.migrated event:', { oldId, newId });
+
+      if (!oldId || !newId) {
+        console.warn('[SunnyAgentsClient] conversation.migrated event missing old_conversation_id or new_conversation_id', raw);
+        return;
+      }
+
+      // Get the existing conversation from the old ID
+      const existingConversation = this.conversations.get(oldId);
+
+      if (existingConversation) {
+        // Merge conversation data from the event if provided
+        const title = conversationData?.title ?? conversationData?.name ?? existingConversation.title ?? null;
+        const messages = existingConversation.messages; // Keep existing messages unless backend provides new ones
+
+        // Create new conversation entry with new ID
+        const migratedConversation: ConversationState = {
+          id: newId,
+          title,
+          messages,
+          quickResponses: existingConversation.quickResponses,
+        };
+
+        // Move conversation from old ID to new ID
+        this.conversations.delete(oldId);
+        this.conversations.set(newId, migratedConversation);
+
+        // Track the migration mapping so we can resolve old IDs to new ones
+        this.migratedConversationIds.set(oldId, newId);
+
+        // Update server-created tracking
+        this.serverCreatedConversations.delete(oldId);
+        this.serverCreatedConversations.add(newId);
+
+        // Update active conversation ID if it matches the old ID
+        if (this.activeConversationId === oldId) {
+          this.activeConversationId = newId;
+        }
+
+        // Update active stream tracking if old ID exists
+        const activeStreamId = this.activeStreamByConversation.get(oldId);
+        if (activeStreamId) {
+          this.activeStreamByConversation.delete(oldId);
+          this.activeStreamByConversation.set(newId, activeStreamId);
+        }
+
+        // Update conversation creation promises if old ID exists
+        const creationPromise = this.conversationCreationPromises.get(oldId);
+        if (creationPromise) {
+          this.conversationCreationPromises.delete(oldId);
+          this.conversationCreationPromises.set(newId, creationPromise);
+        }
+
+        // Emit events
+        this.emit('conversationCreated', { conversationId: newId, title });
+        if (messages.length > 0) {
+          this.emit('messagesUpdated', { conversationId: newId, messages });
+        }
+        this.notify();
+      } else {
+        // Conversation doesn't exist locally, but backend migrated it
+        // Create a new conversation entry with the new ID
+        const title = conversationData?.title ?? conversationData?.name ?? null;
+        this.ensureConversation(newId, title ?? undefined);
+        this.serverCreatedConversations.add(newId);
+        // Track the migration mapping even if conversation didn't exist locally
+        this.migratedConversationIds.set(oldId, newId);
+        this.emit('conversationCreated', { conversationId: newId, title });
+        this.notify();
+      }
+      return;
+    }
 
     if (type === 'conversation.created') {
       const createdId = (raw as any).conversation?.id || (raw as any).conversation_id || conversationId;

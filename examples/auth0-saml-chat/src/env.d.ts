@@ -11,6 +11,8 @@ declare global {
     readonly VITE_SUNNY_TOKEN_EXCHANGE_URL?: string;
     readonly VITE_AUTH0_DOMAIN?: string;
     readonly VITE_AUTH0_CLIENT_ID?: string;
+    readonly VITE_AUTH0_CONNECTION?: string;
+    readonly VITE_AUTH0_ORGANIZATION?: string;
     readonly VITE_BASE_URL?: string;
   }
 

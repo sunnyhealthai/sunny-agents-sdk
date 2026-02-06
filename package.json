@@ -1,6 +1,6 @@
 {
   "name": "@sunnyhealthai/agents-sdk",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "Embed the Sunny Agents chat experience inside any app.",
   "type": "module",
   "main": "dist/index.js",
@@ -36,6 +36,7 @@
   "publishConfig": {
     "access": "public"
   },
+  "dependencies": {},
   "devDependencies": {
     "typescript": "^5.0.0"
   },
@@ -43,4 +44,3 @@
     "node": ">=24.0.0"
   }
 }
-

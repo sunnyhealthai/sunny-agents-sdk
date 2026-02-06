@@ -1,21 +1,26 @@
 import { TokenExchangeManager, type TokenExchangeConfig } from './tokenExchange.js';
 
-export interface AuthorizeResponse {
-  websocket_url: string;
-  session_id: string;
-  expires_at: string;
-}
-
 export type IdTokenProvider = () => Promise<string | null | undefined>;
 export type MessageHandler = (data: any) => void;
+export type TokenProvider = () => Promise<string | null | undefined>;
+export type AuthUpgradeHandler = (success: boolean, data: { user_id?: string; email?: string; error?: string; code?: string }) => void;
 
 export interface LLMWebSocketConfig {
   websocketUrl?: string;
-  authorizeUrl?: string;
   sessionStorageKey?: string;
   idTokenProvider?: IdTokenProvider;
   tokenExchange?: TokenExchangeConfig;
   partnerName?: string;
+}
+
+// Session ID storage is now in-memory only (no localStorage persistence)
+// These functions are kept as no-ops for backward compatibility
+function getStoredSessionId(_storageKey: string): string | null {
+  return null;
+}
+
+function storeSessionId(_storageKey: string, _sessionId: string): void {
+  // No-op: session IDs are stored in-memory only
 }
 
 // Small, dependency-free WebSocket manager shared by the SDK.
@@ -23,14 +28,17 @@ export class LLMWebSocketManager {
   private ws: WebSocket | null = null;
   private connecting: Promise<WebSocket> | null = null;
   private listeners: Set<MessageHandler> = new Set();
-  private session: AuthorizeResponse | null = null;
   private reconnectAttempts = 0;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
-  private isAnonymous = true;
+  private isAuthenticated: boolean = false;
+  private authenticatedUserId: string | null = null;
+  private currentSessionId: string | null = null;
+  private tokenProvider?: TokenProvider;
+  private authUpgradeHandlers: Set<AuthUpgradeHandler> = new Set();
+  private pendingAuthUpgrade: Promise<boolean> | null = null;
   private tokenExchangeManager: TokenExchangeManager | null = null;
   private config: {
     websocketUrl: string;
-    authorizeUrl: string;
     sessionStorageKey: string;
     idTokenProvider?: IdTokenProvider;
     tokenExchange?: TokenExchangeConfig;
@@ -39,8 +47,7 @@ export class LLMWebSocketManager {
 
   constructor(config?: LLMWebSocketConfig) {
     this.config = {
-      websocketUrl: config?.websocketUrl ?? 'wss://chat.api.sunnyhealthai-staging.com',
-      authorizeUrl: config?.authorizeUrl ?? 'https://chat.api.sunnyhealthai-staging.com/authorize',
+      websocketUrl: config?.websocketUrl ?? 'wss://llm.sunnyhealth.live',
       sessionStorageKey: config?.sessionStorageKey ?? 'sunny_agents_session_id',
       idTokenProvider: config?.idTokenProvider,
       tokenExchange: config?.tokenExchange,
@@ -49,11 +56,44 @@ export class LLMWebSocketManager {
 
     // Initialize token exchange manager if both idTokenProvider and tokenExchange are provided
     if (this.config.idTokenProvider && this.config.tokenExchange) {
+      console.log('[LLMWebSocket] Initializing token exchange manager', {
+        hasIdTokenProvider: !!this.config.idTokenProvider,
+        tokenExchangeConfig: {
+          partnerName: this.config.tokenExchange.partnerName,
+          audience: this.config.tokenExchange.audience,
+          clientId: this.config.tokenExchange.clientId,
+          tokenExchangeUrl: this.config.tokenExchange.tokenExchangeUrl,
+        },
+      });
       this.tokenExchangeManager = new TokenExchangeManager(
         this.config.idTokenProvider,
         this.config.tokenExchange
       );
+      // Set token provider to use token exchange
+      this.tokenProvider = async () => {
+        try {
+          console.log('[LLMWebSocket] Token provider called, requesting access token via token exchange');
+          const accessToken = await this.tokenExchangeManager!.getAccessToken();
+          console.log('[LLMWebSocket] Token exchange returned access token', {
+            hasToken: !!accessToken,
+            tokenLength: accessToken?.length || 0,
+          });
+          return accessToken;
+        } catch (error) {
+          console.error('[LLMWebSocket] Token exchange failed:', error);
+          return null;
+        }
+      };
+    } else {
+      console.log('[LLMWebSocket] Token exchange not initialized', {
+        hasIdTokenProvider: !!this.config.idTokenProvider,
+        hasTokenExchange: !!this.config.tokenExchange,
+      });
     }
+  }
+
+  setTokenProvider(provider: TokenProvider) {
+    this.tokenProvider = provider;
   }
 
   setIdTokenProvider(provider: IdTokenProvider) {
@@ -63,34 +103,44 @@ export class LLMWebSocketManager {
         this.config.idTokenProvider,
         this.config.tokenExchange
       );
+      // Set token provider to use token exchange
+      this.tokenProvider = async () => {
+        try {
+          return await this.tokenExchangeManager!.getAccessToken();
+        } catch (error) {
+          console.error('Token exchange failed:', error);
+          return null;
+        }
+      };
     } else {
       this.tokenExchangeManager = null;
+      this.tokenProvider = undefined;
     }
   }
 
-  getIsAnonymous(): boolean {
-    return this.isAnonymous;
+  // Subscribe to auth upgrade events
+  onAuthUpgrade(handler: AuthUpgradeHandler): () => void {
+    this.authUpgradeHandlers.add(handler);
+    return () => {
+      this.authUpgradeHandlers.delete(handler);
+    };
   }
 
-  /**
-   * Gets an access token using token exchange if configured.
-   * Returns null if no token provider is configured or if token exchange fails.
-   */
-  async getAccessToken(): Promise<string | null> {
-    return this.getAccessTokenInternal();
-  }
-
+  // Subscribe to messages from the single connection
   onMessage(handler: MessageHandler): () => void {
     this.listeners.add(handler);
-    return () => this.listeners.delete(handler);
+    return () => {
+      this.listeners.delete(handler);
+    };
   }
 
   async send(payload: any): Promise<void> {
     const socket = await this.connect();
-    const serialized = JSON.stringify(payload, (_k, v) =>
-      typeof v === 'bigint' ? Number(v) : v
+    // Handle BigInt serialization by converting to numbers
+    const serializedPayload = JSON.stringify(payload, (_key, value) =>
+      typeof value === 'bigint' ? Number(value) : value
     );
-    socket.send(serialized);
+    socket.send(serializedPayload);
   }
 
   async connect(): Promise<WebSocket> {
@@ -99,48 +149,42 @@ export class LLMWebSocketManager {
 
     this.connecting = (async () => {
       try {
-        const token = await this.getAccessTokenInternal();
-        const { websocketUrl } = this.config;
-        let wsUrl = websocketUrl;
+        // All connections start anonymous - auth happens via auth.upgrade message
+        // Use in-memory session ID for reconnection (if available within same instance)
+        const backendUrl = this.config.websocketUrl;
 
-        if (token) {
-          this.isAnonymous = false;
-          const session = await this.authorizeIfNeeded();
-          const base = new URL(session.websocket_url);
-          const url = new URL('/ws', `${base.protocol}//${base.host}`);
-          url.protocol = 'wss:';
-          url.searchParams.set('session_id', session.session_id);
-          url.searchParams.set('access_token', `Bearer ${token}`);
-          if (this.config.partnerName) {
-            url.searchParams.set('partner', this.config.partnerName);
-          }
-          wsUrl = url.toString();
-        } else {
-          this.isAnonymous = true;
-          const url = new URL('/ws', websocketUrl);
-          url.protocol = 'wss:';
-          url.searchParams.set('session_id', this.getAnonymousSessionId());
-          if (this.config.partnerName) {
-            url.searchParams.set('partner', this.config.partnerName);
-          }
-          wsUrl = url.toString();
+        // Normalize the URL - handle http/https/ws/wss protocols
+        let baseUrl = backendUrl;
+        if (backendUrl.startsWith('http://')) {
+          baseUrl = backendUrl.replace('http://', 'ws://');
+        } else if (backendUrl.startsWith('https://')) {
+          baseUrl = backendUrl.replace('https://', 'wss://');
+        } else if (!backendUrl.startsWith('ws://') && !backendUrl.startsWith('wss://')) {
+          // If no protocol specified, default to ws://
+          baseUrl = `ws://${backendUrl}`;
         }
 
-        const socket = new WebSocket(wsUrl);
+        // Construct WebSocket URL with /ws path
+        const wsUrl = new URL('/ws', baseUrl);
+
+        // Include session_id for reconnection within same instance, omit for new connections (server will generate)
+        if (this.currentSessionId) {
+          wsUrl.searchParams.set('session_id', this.currentSessionId);
+        }
+
+        // Include partner name if configured
+        if (this.config.partnerName) {
+          wsUrl.searchParams.set('partner_identifier', this.config.partnerName);
+        }
+
+        const finalWsUrl = wsUrl.toString();
+        console.log('[LLMWebSocket] Connecting to:', finalWsUrl);
+
+        const socket = new WebSocket(finalWsUrl);
         this.ws = socket;
 
-        socket.addEventListener('message', (event) => {
-          try {
-            const data = JSON.parse(event.data as string);
-            this.listeners.forEach((listener) => {
-              try { listener(data); } catch { /* ignore listener errors */ }
-            });
-          } catch {
-            // ignore parse errors
-          }
-        });
-
         socket.addEventListener('open', () => {
+          // Reset reconnection attempts on successful connection
           this.reconnectAttempts = 0;
           if (this.reconnectTimeout) {
             clearTimeout(this.reconnectTimeout);
@@ -148,27 +192,80 @@ export class LLMWebSocketManager {
           }
         });
 
-        socket.addEventListener('close', (event) => {
-          this.ws = null;
-          this.connecting = null;
-          // Try to reconnect on abnormal closures
-          if (event.code !== 1000 && event.code !== 1001 && this.reconnectAttempts < 5) {
-            this.reconnectAttempts += 1;
-            const delay = Math.min(1000 * 2 ** (this.reconnectAttempts - 1), 8000);
-            this.reconnectTimeout = setTimeout(() => { void this.connect(); }, delay);
+        socket.addEventListener('message', (event) => {
+          try {
+            const data = JSON.parse(event.data as string);
+
+            // Handle session.started - store the server-provided session ID in memory only
+            if (data.type === 'session.started') {
+              this.currentSessionId = data.session_id;
+            }
+            // Handle auth upgrade responses
+            else if (data.type === 'auth.upgraded') {
+              this.isAuthenticated = true;
+              this.authenticatedUserId = data.user_id;
+              this.authUpgradeHandlers.forEach((handler) => {
+                try { handler(true, { user_id: data.user_id, email: data.email }); } catch { }
+              });
+            } else if (data.type === 'auth.upgrade_failed') {
+              this.authUpgradeHandlers.forEach((handler) => {
+                try { handler(false, { error: data.error, code: data.code }); } catch { }
+              });
+            }
+
+            // Forward all messages to listeners
+            this.listeners.forEach((listener) => {
+              try { listener(data); } catch { }
+            });
+          } catch {
+            // ignore malformed events
           }
         });
 
-        socket.addEventListener('error', () => {
+        socket.addEventListener('close', (event) => {
           this.ws = null;
           this.connecting = null;
+          this.isAuthenticated = false;
+          this.authenticatedUserId = null;
+
+          // Auto-reconnect on unexpected closures (not normal closure)
+          if (event.code !== 1000 && event.code !== 1001 && this.reconnectAttempts < 5) {
+            this.reconnectAttempts++;
+            const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), 10000);
+
+            this.reconnectTimeout = setTimeout(() => {
+              this.connect()
+                .then(() => {
+                  // Re-authenticate if we had a token
+                  this.upgradeAuthIfPossible();
+                })
+                .catch((error) => {
+                  console.error('[LLMWebSocket] Reconnection failed:', error);
+                });
+            }, delay);
+          } else if (this.reconnectAttempts >= 5) {
+            console.error('[LLMWebSocket] Max reconnection attempts reached. Please refresh the page.');
+          }
+        });
+
+        socket.addEventListener('error', (event) => {
+          console.error('[LLMWebSocket] WebSocket error:', event);
         });
 
         if (socket.readyState === WebSocket.CONNECTING) {
           await new Promise<void>((resolve, reject) => {
-            const onOpen = () => { cleanup(); resolve(); };
-            const onError = () => { cleanup(); reject(new Error('WebSocket error')); };
-            const onClose = () => { cleanup(); reject(new Error('WebSocket closed before ready')); };
+            const onOpen = () => {
+              cleanup();
+              resolve();
+            };
+            const onError = (_e: Event) => {
+              cleanup();
+              reject(new Error(`WebSocket connection error: Failed to connect to ${finalWsUrl}. Make sure the server is running and accessible.`));
+            };
+            const onClose = (e: CloseEvent) => {
+              cleanup();
+              reject(new Error(`WebSocket closed before connection established (${e.code}): ${e.reason || 'No reason provided'}. URL: ${finalWsUrl}`));
+            };
             const cleanup = () => {
               socket.removeEventListener('open', onOpen);
               socket.removeEventListener('error', onError);
@@ -182,81 +279,159 @@ export class LLMWebSocketManager {
 
         this.connecting = null;
         return socket;
-      } catch (err) {
+      } catch (error) {
+        console.error('[LLMWebSocket] Connection failed:', error);
         this.ws = null;
         this.connecting = null;
-        throw err;
+        throw error;
       }
     })();
 
     return this.connecting;
   }
 
+  // Upgrade the connection from anonymous to authenticated
+  // migrate_history: if true, migrates anonymous chat history to the authenticated user (for embedded widget)
+  //                  if false, discards anonymous history (for main app)
+  async upgradeAuth(token: string, migrateHistory: boolean = false): Promise<boolean> {
+    // Prevent concurrent upgrade attempts
+    if (this.pendingAuthUpgrade) {
+      return this.pendingAuthUpgrade;
+    }
+
+    this.pendingAuthUpgrade = (async () => {
+      try {
+        const socket = await this.connect();
+
+        if (this.isAuthenticated) {
+          return true;
+        }
+
+        return new Promise<boolean>((resolve) => {
+          const timeout = setTimeout(() => {
+            cleanup();
+            resolve(false);
+          }, 10000); // 10 second timeout
+
+          const cleanup = () => {
+            clearTimeout(timeout);
+            unsubscribe();
+          };
+
+          const unsubscribe = this.onAuthUpgrade((success, data) => {
+            cleanup();
+            if (success) {
+              resolve(true);
+            } else {
+              resolve(false);
+            }
+          });
+
+          // Send the auth upgrade message
+          const cleanToken = token.startsWith('Bearer ') ? token.substring(7) : token;
+          const upgradePayload = {
+            type: 'auth.upgrade',
+            token: cleanToken,
+            migrate_history: migrateHistory
+          };
+          console.log('[LLMWebSocket] Sending auth.upgrade message', {
+            tokenLength: cleanToken.length,
+            tokenPrefix: cleanToken.substring(0, 20) + '...',
+            migrateHistory,
+          });
+          socket.send(JSON.stringify(upgradePayload));
+        });
+      } finally {
+        this.pendingAuthUpgrade = null;
+      }
+    })();
+
+    return this.pendingAuthUpgrade;
+  }
+
+  // Attempt to upgrade auth if we have a token provider
+  // migrateHistory: defaults to false, set to true for embedded widget
+  async upgradeAuthIfPossible(migrateHistory: boolean = false): Promise<boolean> {
+    console.log('[LLMWebSocket] upgradeAuthIfPossible called', {
+      hasTokenProvider: !!this.tokenProvider,
+      migrateHistory,
+      isAuthenticated: this.isAuthenticated,
+    });
+
+    if (!this.tokenProvider) {
+      console.log('[LLMWebSocket] No token provider available, skipping auth upgrade');
+      return false;
+    }
+
+    try {
+      console.log('[LLMWebSocket] Requesting token from provider for auth upgrade');
+      const token = await this.tokenProvider();
+      if (!token) {
+        console.warn('[LLMWebSocket] Token provider returned null/undefined, skipping auth upgrade');
+        return false;
+      }
+
+      console.log('[LLMWebSocket] Token received, upgrading auth', {
+        tokenLength: token.length,
+        tokenPrefix: token.substring(0, 20) + '...',
+      });
+      const success = await this.upgradeAuth(token, migrateHistory);
+      console.log('[LLMWebSocket] Auth upgrade result:', success);
+      return success;
+    } catch (error) {
+      console.error('[LLMWebSocket] Failed to get token for auth upgrade:', error);
+      return false;
+    }
+  }
+
+  getSessionId(): string | null {
+    return this.currentSessionId || null;
+  }
+
+  getIsAuthenticated(): boolean {
+    return this.isAuthenticated;
+  }
+
+  getIsAnonymous(): boolean {
+    return !this.isAuthenticated;
+  }
+
+  getAuthenticatedUserId(): string | null {
+    return this.authenticatedUserId;
+  }
+
+  /**
+   * Gets an access token using token exchange if configured.
+   * Returns null if no token provider is configured or if token exchange fails.
+   */
+  async getAccessToken(): Promise<string | null> {
+    if (this.tokenProvider) {
+      try {
+        const token = await this.tokenProvider();
+        return token === undefined ? null : token;
+      } catch (error) {
+        console.error('Token provider failed:', error);
+        return null;
+      }
+    }
+    return null;
+  }
+
   close(): void {
-    try { this.ws?.close(); } catch { /* ignore */ }
+    try { this.ws?.close(); } catch { }
     this.ws = null;
     this.connecting = null;
+    this.isAuthenticated = false;
+    this.authenticatedUserId = null;
+    // Note: Keep currentSessionId for reconnection - only clear on explicit reset
+
+    // Clear any pending reconnect timeout
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
     }
+
+    // Reset reconnect attempts when explicitly closing
     this.reconnectAttempts = 0;
   }
-
-  private getAnonymousSessionId(): string {
-    const key = this.config.sessionStorageKey;
-    const existing = typeof window !== 'undefined' ? window.localStorage?.getItem(key) : null;
-    if (existing) return existing;
-    const sessionId = `anon_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-    try { window.localStorage?.setItem(key, sessionId); } catch { /* ignore */ }
-    return sessionId;
-  }
-
-  private async authorizeIfNeeded(): Promise<AuthorizeResponse> {
-    if (this.session) return this.session;
-    const token = await this.getAccessTokenInternal();
-    if (!token) {
-      throw new Error('Cannot authorize websocket without a token');
-    }
-
-    const headers: Record<string, string> = {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    };
-
-    if (this.config.partnerName) {
-      headers['x-sunny-partner-identifier'] = this.config.partnerName;
-    }
-
-    const response = await fetch(this.config.authorizeUrl, {
-      method: 'POST',
-      headers,
-    });
-
-    if (!response.ok) {
-      throw new Error(`Authorization failed: ${response.status} ${await response.text()}`);
-    }
-
-    const session = await response.json() as AuthorizeResponse;
-    this.session = session;
-    return session;
-  }
-
-  private async getAccessTokenInternal(): Promise<string | null> {
-    // Use token exchange manager if available
-    if (this.tokenExchangeManager) {
-      try {
-        return await this.tokenExchangeManager.getAccessToken();
-      } catch (error) {
-        // If token exchange fails, return null to fall back to anonymous mode
-        console.error('Token exchange failed:', error);
-        return null;
-      }
-    }
-
-    // Fallback: if idTokenProvider exists but no tokenExchange config, return null
-    // (we don't support direct access tokens anymore)
-    return null;
-  }
 }
-

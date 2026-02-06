@@ -3,3 +3,4 @@ dist
 .env
 playground
 .npmrc
+doppler.yaml

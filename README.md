@@ -14,7 +14,70 @@ yarn add @sunnyhealthai/agents-sdk
 
 ## Quick Start
 
-### Option 1: Drop-in Chat Widget
+### Simplified API (Recommended)
+
+The easiest way to get started is with `createSunnyChat()`, which automatically handles authentication and initialization:
+
+#### SAML/OIDC Authentication (Auto-Login)
+
+For SAML or OIDC authentication via Auth0, provide your Auth0 configuration with `type: 'saml'` or `type: 'oidc'`. Authentication happens automatically:
+
+```ts
+import { createSunnyChat } from "@sunnyhealthai/agents-sdk";
+
+const chat = await createSunnyChat({
+  container: document.getElementById("chat"),
+  websocketUrl: "wss://llm.sunnyhealth.live",
+  auth: {
+    type: 'saml', // or 'oidc' for OIDC connections
+    domain: "your-tenant.auth0.com",
+    clientId: "your-client-id",
+    connection: "guardian-saml", // SAML/OIDC connection name - triggers auto-login
+    audience: "https://api.sunnyhealthai-staging.com", // API audience
+  },
+  headerTitle: "Sunny Agents",
+  placeholder: "Ask anything…",
+});
+
+// Clean up when unmounting
+// chat.destroy();
+```
+
+**Note:** When using SAML/OIDC authentication, Auth0 handles token exchange via standard OAuth flow. Do not provide token exchange config - they are mutually exclusive.
+
+#### Custom Token Exchange
+
+For custom JWT token exchange flows (not SAML/OIDC):
+
+```ts
+const chat = await createSunnyChat({
+  container: document.getElementById("chat"),
+  websocketUrl: "wss://llm.sunnyhealth.live",
+  auth: {
+    type: 'tokenExchange',
+    idTokenProvider: async () => localStorage.getItem("id_token"),
+    partnerName: "your-partner-name",
+    audience: "https://api.sunnyhealthai-staging.com",
+    clientId: "your-client-id",
+  },
+});
+```
+
+**Note:** Custom token exchange requires `idTokenProvider` and is mutually exclusive with SAML/OIDC authentication.
+
+#### Anonymous Mode
+
+For anonymous chat without authentication:
+
+```ts
+const chat = await createSunnyChat({
+  container: document.getElementById("chat"),
+  websocketUrl: "wss://llm.sunnyhealth.live",
+  anonymous: true,
+});
+```
+
+### Option 1: Drop-in Chat Widget (Advanced)
 
 The easiest way to get started is with the pre-built chat widget:
 
@@ -26,8 +89,7 @@ The easiest way to get started is with the pre-built chat widget:
   const { client, destroy } = attachSunnyChat({
     container: document.getElementById("sunny-chat"),
     config: {
-      websocketUrl: "wss://chat.api.sunnyhealthai-staging.com",
-      authorizeUrl: "https://chat.api.sunnyhealthai-staging.com/authorize",
+      websocketUrl: "wss://llm.sunnyhealth.live",
       idTokenProvider: async () => localStorage.getItem("id_token"),
       tokenExchange: {
         partnerName: "your-partner-name",
@@ -52,8 +114,7 @@ For custom UI implementations, use the headless client:
 import { SunnyAgentsClient } from "@sunnyhealthai/agents-sdk";
 
 const client = new SunnyAgentsClient({
-  websocketUrl: "wss://chat.api.sunnyhealthai-staging.com",
-  authorizeUrl: "https://chat.api.sunnyhealthai-staging.com/authorize",
+  websocketUrl: "wss://llm.sunnyhealth.live",
   idTokenProvider: async () => localStorage.getItem("id_token"),
   tokenExchange: {
     partnerName: "your-partner-name",
@@ -87,8 +148,7 @@ When using authenticated mode, provide an `idTokenProvider` function that return
 
 ```ts
 const client = new SunnyAgentsClient({
-  websocketUrl: "wss://chat.api.sunnyhealthai-staging.com",
-  authorizeUrl: "https://chat.api.sunnyhealthai-staging.com/authorize",
+  websocketUrl: "wss://llm.sunnyhealth.live",
   idTokenProvider: async () => {
     // Return your ID token (e.g., from Auth0, Firebase, etc.)
     return localStorage.getItem("id_token");
@@ -123,8 +183,7 @@ For anonymous/local-only conversations, omit the `idTokenProvider` and `tokenExc
 
 ```ts
 const client = new SunnyAgentsClient({
-  websocketUrl: "wss://chat.api.sunnyhealthai-staging.com",
-  authorizeUrl: "https://chat.api.sunnyhealthai-staging.com/authorize",
+  websocketUrl: "wss://llm.sunnyhealth.live",
   // No idTokenProvider or tokenExchange = anonymous mode
 });
 ```
@@ -133,8 +192,7 @@ Or explicitly disable server conversation creation:
 
 ```ts
 const client = new SunnyAgentsClient({
-  websocketUrl: "wss://chat.api.sunnyhealthai-staging.com",
-  authorizeUrl: "https://chat.api.sunnyhealthai-staging.com/authorize",
+  websocketUrl: "wss://llm.sunnyhealth.live",
   createServerConversations: false, // Explicitly disable server persistence
 });
 ```
@@ -145,8 +203,7 @@ With the vanilla widget, you can use the `anonymous` option:
 attachSunnyChat({
   container: document.getElementById("sunny-chat"),
   config: {
-    websocketUrl: "wss://chat.api.sunnyhealthai-staging.com",
-    authorizeUrl: "https://chat.api.sunnyhealthai-staging.com/authorize",
+    websocketUrl: "wss://llm.sunnyhealth.live",
   },
   anonymous: true, // Enables anonymous mode (same as omitting idTokenProvider)
 });
@@ -154,7 +211,326 @@ attachSunnyChat({
 
 **Note:** `createServerConversations` defaults to `true` if both `idTokenProvider` and `tokenExchange` are provided, otherwise `false`. The `anonymous` option in `attachSunnyChat` sets `createServerConversations: false` when no token provider is configured.
 
+### Auth0 Enterprise Connection (SAML)
+
+For partners using SAML authentication (e.g., Guardian), you can configure SAML as an **Auth0 Enterprise Connection**. This approach leverages Auth0's built-in SAML support, eliminating the need for SAML parsing in your application.
+
+**Benefits:**
+- ✅ No SAML parsing needed - Auth0 handles all SAML complexity
+- ✅ Popup-based authentication (no page redirects) - perfect for widgets
+- ✅ Silent authentication - auto-authenticate if user already has Auth0 session
+- ✅ Built-in security - Auth0 handles signature validation, replay protection, etc.
+- ✅ **Automatic authentication** - `createSunnyChat()` handles everything automatically
+
+**Setup Steps:**
+
+1. **Configure SAML in Auth0 Dashboard:**
+   - Create Enterprise Connection → SAML
+   - Configure SAML metadata (Entity ID, Sign-in URL, X.509 Certificate)
+   - Map SAML attributes to Auth0 user profile
+   - Enable the connection for your Auth0 application
+
+2. **Use the simplified API (Recommended):**
+
+```ts
+import { createSunnyChat } from '@sunnyhealthai/agents-sdk';
+
+// Authentication happens automatically!
+const chat = await createSunnyChat({
+  container: document.getElementById('chat'),
+  auth: {
+    type: 'saml', // or 'oidc' for OIDC connections
+    domain: 'your-tenant.auth0.com',
+    clientId: 'your-client-id',
+    connection: 'guardian-saml', // SAML/OIDC connection name - triggers auto-login
+    audience: 'https://api.sunnyhealthai-staging.com',
+  },
+});
+```
+
+**Note:** When using SAML/OIDC authentication (`auth.type: 'saml'` or `'oidc'`), Auth0 handles token exchange via standard OAuth flow. Do not provide token exchange config - they are mutually exclusive.
+
+3. **Advanced: Use Auth0Provider directly (for custom flows):**
+
+```ts
+import { Auth0Provider, SunnyAgentsClient } from '@sunnyhealthai/agents-sdk';
+
+// Initialize Auth0 provider
+const auth0Provider = new Auth0Provider({
+  domain: 'your-tenant.auth0.com',
+  clientId: 'your-client-id',
+  redirectUri: window.location.origin + '/callback',
+  connection: 'guardian-saml', // Your SAML connection name
+  audience: 'https://api.sunnyhealthai-staging.com', // Optional
+  usePopup: true, // Use popup mode (no redirects) - default: true
+  useModal: true, // Use native modal overlay - default: true
+  storageType: 'sessionStorage', // or 'localStorage' for persistence
+});
+
+// Try silent authentication first (no UI)
+try {
+  await auth0Provider.checkSession();
+} catch (error) {
+  // No session, user needs to authenticate
+}
+
+// If not authenticated, open modal (no page redirect)
+if (!auth0Provider.isAuthenticated()) {
+  try {
+    await auth0Provider.authorizePopup();
+    // Modal closed, tokens are now available
+  } catch (error) {
+    // User closed modal or error occurred
+    // Fallback to redirect mode if needed:
+    // auth0Provider.authorizeRedirect();
+  }
+}
+
+// Use with SDK
+const client = new SunnyAgentsClient({
+  websocketUrl: "wss://llm.sunnyhealth.live",
+  idTokenProvider: () => Promise.resolve(auth0Provider.getIdToken()),
+  // Note: No tokenExchange - Auth0 handles token exchange via OAuth
+});
+```
+
+**With the vanilla widget:**
+
+```ts
+import { Auth0Provider, attachSunnyChat } from '@sunnyhealthai/agents-sdk';
+
+const auth0Provider = new Auth0Provider({
+  domain: 'your-tenant.auth0.com',
+  clientId: 'your-client-id',
+  redirectUri: window.location.origin + '/callback',
+  connection: 'guardian-saml',
+  useModal: true, // Use native modal overlay (default: true)
+});
+
+// Authenticate user
+if (!auth0Provider.isAuthenticated()) {
+  await auth0Provider.authorizePopup();
+}
+
+// Initialize chat widget
+const { client, destroy } = attachSunnyChat({
+  container: document.getElementById('sunny-chat'),
+  config: {
+    websocketUrl: "wss://llm.sunnyhealth.live",
+    idTokenProvider: () => Promise.resolve(auth0Provider.getIdToken()),
+    tokenExchange: {
+      partnerName: 'guardian',
+      audience: 'https://api.sunnyhealthai-staging.com',
+      clientId: 'your-auth0-client-id',
+    },
+  },
+});
+```
+
+**Authentication Modes:**
+
+- **Modal Overlay (Default)** - Opens Auth0 in a native-feeling modal overlay with backdrop blur, no page redirects. Perfect for widgets.
+- **Popup Window** - Opens Auth0 in a popup window (set `useModal: false`). Falls back to this if modal doesn't work.
+- **Silent Authentication** - Attempts to authenticate without UI if user already has Auth0 session.
+- **Redirect Mode** - Full page redirect for traditional web apps (set `usePopup: false`).
+
+**Auth0Provider API:**
+
+- `authorizePopup()` - Open Auth0 in popup window (returns Promise)
+- `authorizeRedirect()` - Redirect to Auth0 (full page)
+- `checkSession()` - Silent authentication check (no UI)
+- `handleCallback()` - Parse tokens from callback URL (for redirect mode)
+- `getIdToken()` - Get current ID token
+- `getAccessToken()` - Get current access token
+- `isAuthenticated()` - Check if user is authenticated
+- `logout(redirectToLogout?, returnTo?)` - Clear tokens and optionally redirect to Auth0 logout
+
+See the [Auth0 SAML example](examples/auth0-saml-chat/) for a complete implementation using the simplified `createSunnyChat()` API.
+
+### Passwordless Authentication
+
+For passwordless authentication via email or SMS, use the `PasswordlessAuthManager`. This provides WebSocket-based authentication that eliminates page refreshes and redirects.
+
+**Benefits:**
+- ✅ No page redirects - all authentication happens via WebSocket
+- ✅ Email or SMS OTP verification
+- ✅ Seamless integration with chat widget
+- ✅ Optional chat history migration on authentication
+- ✅ Works with token exchange for Sunny access tokens
+
+**Basic Usage:**
+
+```ts
+import { PasswordlessAuthManager, LLMWebSocketManager, attachSunnyChat } from '@sunnyhealthai/agents-sdk';
+
+// Create shared WebSocket manager for passwordless auth and chat
+const wsManager = new LLMWebSocketManager({
+  websocketUrl: 'wss://llm.sunnyhealth.live',
+});
+
+// Initialize passwordless auth manager
+const passwordlessAuth = new PasswordlessAuthManager({
+  wsManager, // Required - WebSocket manager instance
+  migrateHistory: true, // Migrate anonymous chat history to authenticated user
+  storageType: 'sessionStorage', // 'memory', 'sessionStorage', or 'localStorage'
+});
+
+// Start passwordless login flow
+await passwordlessAuth.startLogin({ email: 'user@example.com' });
+// or
+await passwordlessAuth.startLogin({ phoneNumber: '+1234567890' });
+
+// Verify OTP code
+await passwordlessAuth.verifyCode({
+  email: 'user@example.com', // or phoneNumber
+  code: '123456',
+});
+
+// Check authentication status
+if (passwordlessAuth.isAuthenticated()) {
+  const userId = passwordlessAuth.getUserId();
+  const email = passwordlessAuth.getEmail();
+}
+
+// Use with chat widget
+const { client, destroy } = attachSunnyChat({
+  container: document.getElementById('chat'),
+  passwordlessAuth, // Enables verification flow UI in chat messages
+  config: {
+    websocketUrl: 'wss://llm.sunnyhealth.live',
+    wsManager, // Share the same WebSocket manager
+  },
+});
+```
+
+**Configuration Options (`PasswordlessAuthConfig`):**
+
+- `wsManager: LLMWebSocketManager` - **Required** - WebSocket manager instance for sending passwordless auth messages
+- `migrateHistory?: boolean` - Whether to migrate anonymous chat history to authenticated user on successful auth (default: `false`)
+- `tokenExchange?: TokenExchangeConfig` - Optional token exchange configuration to obtain Sunny access tokens
+- `storageKey?: string` - Optional storage key for persisting auth state (default: in-memory only)
+- `storageType?: 'memory' | 'sessionStorage' | 'localStorage'` - Storage type for auth state (default: `'memory'`)
+
+**Methods:**
+
+- **`startLogin(options: PasswordlessStartOptions)`**: Start passwordless login flow by sending OTP code
+  - `options.email?: string` - Email address (provide either email or phoneNumber)
+  - `options.phoneNumber?: string` - Phone number (provide either email or phoneNumber)
+  - Returns `Promise<void>`
+
+- **`verifyCode(options: PasswordlessVerifyOptions)`**: Verify OTP code and authenticate user
+  - `options.email?: string` - Email address used for login
+  - `options.phoneNumber?: string` - Phone number used for login
+  - `options.code: string` - OTP verification code
+  - Returns `Promise<void>`
+
+- **`getIdToken(): string | null`**: Get stored user ID (for compatibility with token exchange flows)
+
+- **`getUserId(): string | null`**: Get authenticated user ID, or null if not authenticated
+
+- **`getEmail(): string | null`**: Get authenticated user's email, or null if not authenticated
+
+- **`getAccessToken(): Promise<string | null>`**: Get Sunny access token via token exchange if configured
+
+- **`isAuthenticated(): boolean`**: Check if user is authenticated
+
+- **`logout(): void`**: Clear authentication state
+
+- **`onAuthStateChange(callback: (isAuthenticated: boolean) => void)`**: Subscribe to authentication state changes. Returns unsubscribe function.
+
+- **`onOtpSent(callback: (connection: 'email' | 'sms') => void)`**: Subscribe to OTP sent events. Returns unsubscribe function.
+
+- **`destroy(): void`**: Clean up resources and event listeners
+
+**Integration with Chat Widget:**
+
+When `passwordlessAuth` is provided to `attachSunnyChat()`, verification flow tags in chat messages (`{verification_flow}`) will automatically render a passwordless login form, allowing users to authenticate directly within the chat interface.
+
+**Example with Token Exchange:**
+
+```ts
+import { PasswordlessAuthManager, LLMWebSocketManager, attachSunnyChat } from '@sunnyhealthai/agents-sdk';
+
+const wsManager = new LLMWebSocketManager({
+  websocketUrl: 'wss://llm.sunnyhealth.live',
+  tokenExchange: {
+    partnerName: 'your-partner-name',
+    audience: 'https://api.sunnyhealthai-staging.com',
+    clientId: 'your-client-id',
+  },
+});
+
+const passwordlessAuth = new PasswordlessAuthManager({
+  wsManager,
+  tokenExchange: {
+    partnerName: 'your-partner-name',
+    audience: 'https://api.sunnyhealthai-staging.com',
+    clientId: 'your-client-id',
+  },
+  migrateHistory: true,
+});
+
+// After authentication, access tokens are available
+const accessToken = await passwordlessAuth.getAccessToken();
+```
+
+See the [vanilla chat example](examples/vanilla-chat/) for a complete implementation with passwordless authentication.
+
 ## API Reference
+
+### createSunnyChat
+
+**Recommended API** - Unified entry point that automatically handles authentication and initialization.
+
+```ts
+createSunnyChat(options: UnifiedSunnyChatOptions): Promise<VanillaChatInstance>
+```
+
+**Configuration Options (`UnifiedSunnyChatOptions`):**
+
+- `container: HTMLElement` - Container element to mount the chat widget
+- `websocketUrl?: string` - WebSocket URL for chat connection
+- `apiBaseUrl?: string` - Base URL for REST API calls (e.g., artifact fetching)
+- `auth?: AuthConfig` - Authentication configuration (mutually exclusive options):
+  
+  **Option 1: SAML/OIDC Authentication (`SamlOidcAuthConfig`)**
+  - `type: 'saml' | 'oidc'` - Authentication type
+  - `domain: string` - Auth0 domain (e.g., `'your-tenant.auth0.com'`)
+  - `clientId: string` - Auth0 client ID
+  - `connection: string` - SAML/OIDC connection name - triggers automatic authentication
+  - `organization?: string` - Organization ID or name (required for some clients)
+  - `audience?: string` - API audience for access tokens
+  - `redirectUri?: string` - Callback URL after authentication (defaults to current origin + '/callback.html')
+  - `usePopup?: boolean` - Use popup instead of redirect (default: `true`)
+  - `useModal?: boolean` - Use modal overlay instead of popup window (default: `true`)
+  - `storageType?: 'sessionStorage' | 'localStorage'` - Token storage type (default: `'sessionStorage'`)
+  
+  **Option 2: Custom Token Exchange (`TokenExchangeAuthConfig`)**
+  - `type: 'tokenExchange'` - Authentication type
+  - `idTokenProvider: () => Promise<string | null>` - Function that returns ID token for exchange
+  - `partnerName: string` - Partner identifier
+  - `audience: string` - API audience for access token
+  - `clientId: string` - Auth0 client ID for token exchange
+  - `tokenExchangeUrl?: string` - Token exchange endpoint URL
+  - `devRoute?: string` - Developer route/destination
+
+- `headerTitle?: string` - Title displayed in chat header (default: `"Sunny Agents"`)
+- `placeholder?: string` - Input placeholder text (default: `"Ask anything…"`)
+- `colors?: VanillaChatColors` - Custom theme colors
+- `anonymous?: boolean` - Enable anonymous mode explicitly (default: `true` if no auth, otherwise `false`)
+
+**Returns:**
+
+- `Promise<VanillaChatInstance>` - Promise resolving to chat instance with:
+  - `client: SunnyAgentsClient` - The underlying client instance
+  - `destroy(): void` - Cleanup function to unmount the widget
+
+**Important Notes:**
+
+- SAML/OIDC (`auth.type: 'saml'` or `'oidc'`) and token exchange (`auth.type: 'tokenExchange'`) are **mutually exclusive**
+- When using SAML/OIDC, Auth0 handles token exchange via standard OAuth flow
+- When using token exchange, you must provide `idTokenProvider` within the auth config
+- Authentication happens automatically when `auth` is provided
 
 ### SunnyAgentsClient
 
@@ -168,8 +544,8 @@ new SunnyAgentsClient(config?: SunnyAgentsConfig)
 
 **Configuration Options (`SunnyAgentsConfig`):**
 
-- `websocketUrl?: string` - WebSocket URL for chat connection (defaults to `"wss://chat.api.sunnyhealthai-staging.com"`)
-- `authorizeUrl?: string` - Authorization endpoint URL (defaults to `"https://chat.api.sunnyhealthai-staging.com/authorize"`)
+- `websocketUrl?: string` - WebSocket URL for chat connection (defaults to `"wss://llm.sunnyhealth.live"`)
+- `wsManager?: LLMWebSocketManager` - Optional WebSocket manager instance to share across multiple clients. Allows sharing the same WebSocket connection between `PasswordlessAuthManager` and `SunnyAgentsClient` for seamless authentication. If not provided, a new `LLMWebSocketManager` will be created.
 - `idTokenProvider?: () => Promise<string | null>` - Function that returns an ID token for token exchange
 - `tokenExchange?: TokenExchangeConfig` - Token exchange configuration (required if using `idTokenProvider`)
   - `partnerName: string` - Partner identifier (e.g., `"sunny-health-external-mock"`)
@@ -200,6 +576,8 @@ new SunnyAgentsClient(config?: SunnyAgentsConfig)
 
 - **`sendMcpApproval(conversationId: string, approvalRequestId: string, approve: boolean, reason?: string | null)`**: Send an MCP approval response for a pending approval request.
 
+- **`setIdTokenProvider(provider: (() => Promise<string | null>) | undefined)`**: Dynamically update the ID token provider. Useful for updating authentication after a user logs in. Pass `undefined` to clear the provider.
+
 - **`on(event, handler)`**: Subscribe to events. Returns an unsubscribe function.
 - **`off(event, handler)`**: Unsubscribe from events
 
@@ -226,6 +604,8 @@ Mount a ready-to-use chat widget.
 - `headerTitle?: string` - Title displayed in the chat header (default: `"Sunny Agents"`)
 - `placeholder?: string` - Input placeholder text (default: `"Ask anything…"`)
 - `anonymous?: boolean` - Enable anonymous mode. Sets `createServerConversations: false` when no token provider is configured (default: `false`)
+- `conversationId?: string` - Optional conversation ID to use for anonymous sessions. If not provided, a new UUID will be generated (in-memory only, no persistence).
+- `passwordlessAuth?: PasswordlessAuthManager` - Optional PasswordlessAuthManager instance for handling verification flow in chat messages. When provided, verification flow tags in messages (`{verification_flow}`) will render a passwordless login form.
 - `conversationStorageKey?: string` - localStorage key for persisting conversation ID (default: `"sunny_agents_conversation_id"`)
 - `colors?: VanillaChatColors` - Custom theme colors
   - `primary?: string` - Primary color for user messages, send button, and focus states (default: `"#006fff"`)
@@ -287,17 +667,43 @@ This package includes full TypeScript definitions. Import types and classes as n
 
 ```ts
 import {
+  createSunnyChat, // Recommended unified API
   SunnyAgentsClient, // Class, not a type
   attachSunnyChat,
+  Auth0Provider,
+  PasswordlessAuthManager, // Class, not a type
   type ConversationState,
   type SunnyAgentMessage,
   type SunnyAgentsConfig,
+  type UnifiedSunnyChatOptions, // Unified config type
+  type AuthConfig, // Discriminated union: SamlOidcAuthConfig | TokenExchangeAuthConfig
+  type SamlOidcAuthConfig, // SAML/OIDC auth configuration
+  type TokenExchangeAuthConfig, // Token exchange auth configuration
   type SendMessageOptions,
   type SunnyAgentsClientSnapshot,
   type ChatArtifact,
   type DoctorProfileArtifact,
+  type ProviderSearchResultsArtifact, // Provider search results artifact
+  type ProviderResult, // Individual provider result
+  type LocationResult, // Provider location result
   type VanillaChatOptions,
   type VanillaChatInstance,
   type VanillaChatColors,
+  type Auth0ProviderConfig,
+  type Auth0PopupOptions, // Popup window options for Auth0
+  type PasswordlessAuthConfig, // Passwordless auth configuration
+  type PasswordlessStartOptions, // Options for starting passwordless login
+  type PasswordlessVerifyOptions, // Options for verifying OTP code
+  type PasswordlessAuthState, // Current passwordless auth state
+} from "@sunnyhealthai/agents-sdk";
+
+// Internal APIs (exported for advanced use cases but not recommended for most users)
+import {
+  LLMWebSocketManager, // Internal - WebSocket manager
+  TokenExchangeManager, // Internal - Token exchange manager
+  exchangeIdTokenForAccessToken, // Internal - Direct token exchange function
+  type LLMWebSocketConfig, // Internal - WebSocket configuration
+  type TokenExchangeConfig, // Internal - Token exchange configuration
+  type TokenExchangeResponse, // Internal - Token exchange response
 } from "@sunnyhealthai/agents-sdk";
 ```

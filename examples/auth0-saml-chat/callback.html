@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Auth0 Callback</title>
+  </head>
+  <body>
+    <p>Processing authentication...</p>
+    <script type="module">
+      // This page handles the Auth0 redirect callback
+      // The main app will handle the token extraction
+      // Redirect back to main page after a brief moment
+      setTimeout(() => {
+        const mainUrl = window.location.origin + window.location.pathname.replace('/callback.html', '/index.html');
+        window.location.href = mainUrl;
+      }, 1000);
+    </script>
+  </body>
+</html>

@@ -16,17 +16,55 @@
       </header>
 
       <section class="token-panel">
-        <form id="token-form">
-          <label for="token-input">ID Token</label>
-          <input id="token-input" name="token" type="password" placeholder="sk-live-..." autocomplete="off" />
-          <div class="token-actions">
-            <button type="submit">Save token</button>
-            <button type="button" id="clear-token">Clear token</button>
-          </div>
-          <small>
-            Tokens are stored only in your browser's localStorage for this example. Reload after saving to rehydrate the chat with the latest value.
-          </small>
-        </form>
+        <h2>Authentication Options</h2>
+        
+        <div class="auth-tabs">
+          <button class="auth-tab active" data-tab="passwordless">Passwordless Login</button>
+          <button class="auth-tab" data-tab="manual">Manual Token</button>
+        </div>
+
+        <div id="passwordless-auth" class="auth-content active">
+          <form id="passwordless-form">
+            <div class="form-group">
+              <label for="email-input">Email</label>
+              <input id="email-input" name="email" type="email" placeholder="user@example.com" autocomplete="email" />
+            </div>
+            <div class="form-group">
+              <label for="phone-input">Phone Number (alternative)</label>
+              <input id="phone-input" name="phone" type="tel" placeholder="+1234567890" autocomplete="tel" />
+            </div>
+            <div class="form-group" id="code-group" style="display: none;">
+              <label for="code-input">Verification Code</label>
+              <input id="code-input" name="code" type="text" placeholder="Enter code from email/SMS" autocomplete="one-time-code" />
+            </div>
+            <div id="passwordless-status" class="status-message"></div>
+            <div class="form-group" id="token-display-group" style="display: none;">
+              <label for="token-display">ID Token</label>
+              <textarea id="token-display" readonly rows="4" placeholder="Token will appear here after successful authentication"></textarea>
+            </div>
+            <div class="token-actions">
+              <button type="submit" id="passwordless-submit">Send Code</button>
+              <button type="button" id="passwordless-logout" style="display: none;">Logout</button>
+            </div>
+            <small>
+              Enter your email or phone number to receive a verification code. After verification, you'll be automatically authenticated.
+            </small>
+          </form>
+        </div>
+
+        <div id="manual-auth" class="auth-content">
+          <form id="token-form">
+            <label for="token-input">ID Token</label>
+            <input id="token-input" name="token" type="password" placeholder="sk-live-..." autocomplete="off" />
+            <div class="token-actions">
+              <button type="submit">Save token</button>
+              <button type="button" id="clear-token">Clear token</button>
+            </div>
+            <small>
+              Tokens are stored in memory only (no persistence). The token will be lost on page reload.
+            </small>
+          </form>
+        </div>
       </section>
 
       <section class="chat-panel">

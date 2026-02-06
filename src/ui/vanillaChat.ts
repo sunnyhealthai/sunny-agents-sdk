@@ -1,6 +1,9 @@
 import { SunnyAgentsClient } from '../client/SunnyAgentsClient';
+import type { PasswordlessAuthManager } from '../client/passwordlessAuth';
 import type {
   DoctorProfileArtifact,
+  ProviderResult,
+  ProviderSearchResultsArtifact,
   SunnyAgentMessage,
   SunnyAgentMessageItem,
   SunnyAgentsClientSnapshot,
@@ -33,15 +36,20 @@ export interface VanillaChatOptions {
    */
   anonymous?: boolean;
   /**
-    * Optional localStorage key to persist/reuse a conversation id for anonymous sessions.
-    * Defaults to "sunny_agents_conversation_id".
+    * Optional conversation ID to use for anonymous sessions.
+    * If not provided, a new UUID will be generated (in-memory only, no persistence).
     */
-  conversationStorageKey?: string;
+  conversationId?: string;
   /**
    * Custom theme colors for the chat UI.
    * Uses CSS custom properties for easy styling.
    */
   colors?: VanillaChatColors;
+  /**
+   * Optional PasswordlessAuthManager instance for handling verification flow in chat messages.
+   * When provided, verification flow tags in messages will render a passwordless login form.
+   */
+  passwordlessAuth?: PasswordlessAuthManager;
 }
 
 export interface VanillaChatInstance {
@@ -56,12 +64,16 @@ const MINIMAL_DOCTOR_PROFILE_START = '{minimal_doctor_profile}';
 const MINIMAL_DOCTOR_PROFILE_END = '{/minimal_doctor_profile}';
 const DOCTOR_PROFILE_START = '{doctor_profile}';
 const DOCTOR_PROFILE_END = '{/doctor_profile}';
+const VERIFICATION_FLOW_START = '{verification_flow}';
+const VERIFICATION_FLOW_END = '{/verification_flow}';
 
-type ArtifactSegment = 
-  | { type: 'text'; value: string } 
+type ArtifactSegment =
+  | { type: 'text'; value: string }
   | { type: 'expanded_profile'; data: any }
   | { type: 'minimal_profile'; data: any }
-  | { type: 'legacy_profile'; data: any };
+  | { type: 'legacy_profile'; data: any }
+  | { type: 'provider_search_results'; data: ProviderSearchResultsArtifact }
+  | { type: 'verification_flow'; action: string };
 type ApprovalState = 'approved' | 'rejected';
 
 interface ProviderCardViewModel {
@@ -83,11 +95,13 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     headerTitle = 'Sunny Agents',
     placeholder = 'Ask anything…',
     anonymous = false,
-    conversationStorageKey = 'sunny_agents_conversation_id',
+    conversationId: providedConversationId,
     colors = {},
+    passwordlessAuth,
   } = options;
 
-  let persistedConversationId = getOrCreateConversationId(conversationStorageKey);
+  // Use provided conversation ID or generate a new one (in-memory only)
+  let persistedConversationId = providedConversationId || generateUuid();
 
   const client = providedClient ?? new SunnyAgentsClient({
     ...config,
@@ -102,7 +116,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   // DOM structure
   const root = document.createElement('div');
   root.className = 'sunny-chat sunny-chat--collapsed';
-  
+
   // Apply custom color properties
   if (colors.primary) root.style.setProperty('--sunny-color-primary', colors.primary);
   if (colors.secondary) root.style.setProperty('--sunny-color-secondary', colors.secondary);
@@ -158,7 +172,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     root.classList.toggle('sunny-chat--collapsed', !expanded);
     modalBackdrop.classList.toggle('sunny-chat-modal-backdrop--open', expanded);
     modalBackdrop.setAttribute('aria-hidden', String(!expanded));
-    
+
     if (expanded) {
       // Transfer any text from trigger input to modal input
       if (triggerInput.value.trim()) {
@@ -203,8 +217,10 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     }
 
     messagesEl.innerHTML = '';
+    // Filter out hidden messages from display
+    const visibleMessages = convo.messages.filter((msg) => !msg.text?.includes('{hidden_message}'));
     const approvalStatuses = buildApprovalStatuses(convo.messages);
-    for (const msg of convo.messages) {
+    for (const msg of visibleMessages) {
       const row = document.createElement('div');
       row.className = `sunny-chat__message sunny-chat__message--${msg.role}`;
       const bubble = buildMessageBubble(msg, convo.id, approvalStatuses);
@@ -257,7 +273,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
           .replace(/\n`+\n/g, '\n\n') // Remove backticks on their own lines
           .replace(/^\s*`+\s*$/gm, '') // Remove lines that are only backticks
           .trim();
-        
+
         if (cleanedText) {
           const paragraph = createParagraph(cleanedText, true);
           if (paragraph) {
@@ -270,6 +286,14 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
         container.appendChild(createMinimalProviderCard(segment.data));
       } else if (segment.type === 'legacy_profile') {
         container.appendChild(createLegacyProviderCard(segment.data));
+      } else if (segment.type === 'provider_search_results') {
+        // Append each provider card individually
+        const providerCards = createProviderSearchResultsCard(segment.data);
+        providerCards.forEach((card) => {
+          container.appendChild(card);
+        });
+      } else if (segment.type === 'verification_flow') {
+        container.appendChild(createVerificationFlowComponent(passwordlessAuth, client, config));
       }
     }
   };
@@ -280,7 +304,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
-    
+
     // Remove standalone backticks (formatting artifacts)
     // Remove backticks at start/end of lines and standalone single backticks
     html = html.replace(/^`+\s*/gm, ''); // Remove leading backticks at start of lines
@@ -289,10 +313,10 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     html = html.replace(/([^`])`([^`])/g, '$1$2'); // Remove single backticks between non-backtick chars
     html = html.replace(/^`([^`])/gm, '$1'); // Remove leading single backtick
     html = html.replace(/([^`])`$/gm, '$1'); // Remove trailing single backtick
-    
+
     // Parse links: [text](url) - do this first before other formatting
     html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="sunny-markdown-link">$1</a>');
-    
+
     // Parse bold: **text** (handle this before italic to avoid conflicts)
     // Use a placeholder to avoid conflicts with italic parsing
     const boldPlaceholders: string[] = [];
@@ -301,18 +325,18 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       boldPlaceholders.push(`<strong class="sunny-markdown-bold">${content}</strong>`);
       return placeholder;
     });
-    
+
     // Parse italic: *text* (only single asterisks remaining)
     html = html.replace(/\*([^*\n]+?)\*/g, '<em class="sunny-markdown-italic">$1</em>');
-    
+
     // Restore bold placeholders
     boldPlaceholders.forEach((replacement, index) => {
       html = html.replace(`__BOLD_${index}__`, replacement);
     });
-    
+
     // Parse line breaks: \n becomes <br>
     html = html.replace(/\n/g, '<br>');
-    
+
     return html;
   };
 
@@ -320,7 +344,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     const trimmed = (text ?? '').trim();
     if (!trimmed) return null;
     const paragraph = document.createElement('p');
-    
+
     if (isAssistant) {
       // Parse markdown for assistant messages
       paragraph.innerHTML = parseMarkdown(trimmed);
@@ -328,7 +352,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       // Plain text for user messages
       paragraph.textContent = trimmed;
     }
-    
+
     return paragraph;
   };
 
@@ -438,6 +462,331 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     return card;
   };
 
+  const createVerificationFlowComponent = (authManager: PasswordlessAuthManager | undefined, client: SunnyAgentsClient, clientConfig: SunnyAgentsConfig | undefined): HTMLElement => {
+    const card = document.createElement('div');
+    card.className = 'sunny-verification-flow';
+
+    if (!authManager) {
+      card.classList.add('sunny-verification-flow--error');
+      const errorMessage = document.createElement('div');
+      errorMessage.className = 'sunny-verification-flow__error';
+      errorMessage.textContent = 'Passwordless authentication is not configured. Please provide a PasswordlessAuthManager instance.';
+      card.appendChild(errorMessage);
+      return card;
+    }
+
+    // Check if user is already authenticated - if so, show success state immediately
+    if (authManager.isAuthenticated()) {
+      const successMessage = document.createElement('div');
+      successMessage.className = 'sunny-verification-flow__success';
+      successMessage.textContent = '✓ Verification successful! You are now authenticated.';
+      card.appendChild(successMessage);
+      return card;
+    }
+
+    // Form state
+    let waitingForCode = false;
+    let currentEmail: string | null = null;
+    let currentPhone: string | null = null;
+    let isSendingCode = false;
+    let isVerifyingCode = false;
+
+    // Create form container
+    const form = document.createElement('form');
+    form.className = 'sunny-verification-flow__form';
+    form.addEventListener('submit', (e) => e.preventDefault());
+
+    // Email/Phone input group
+    const inputGroup = document.createElement('div');
+    inputGroup.className = 'sunny-verification-flow__input-group';
+
+    // Toggle between email and phone
+    const methodToggle = document.createElement('div');
+    methodToggle.className = 'sunny-verification-flow__method-toggle';
+    const emailTab = document.createElement('button');
+    emailTab.type = 'button';
+    emailTab.className = 'sunny-verification-flow__tab sunny-verification-flow__tab--active';
+    emailTab.textContent = 'Email';
+    const phoneTab = document.createElement('button');
+    phoneTab.type = 'button';
+    phoneTab.className = 'sunny-verification-flow__tab';
+    phoneTab.textContent = 'Phone';
+
+    let useEmail = true;
+    emailTab.addEventListener('click', () => {
+      useEmail = true;
+      emailTab.classList.add('sunny-verification-flow__tab--active');
+      phoneTab.classList.remove('sunny-verification-flow__tab--active');
+      emailInput.style.display = 'block';
+      phoneInput.style.display = 'none';
+    });
+    phoneTab.addEventListener('click', () => {
+      useEmail = false;
+      phoneTab.classList.add('sunny-verification-flow__tab--active');
+      emailTab.classList.remove('sunny-verification-flow__tab--active');
+      emailInput.style.display = 'none';
+      phoneInput.style.display = 'block';
+    });
+
+    methodToggle.appendChild(emailTab);
+    methodToggle.appendChild(phoneTab);
+
+    // Email input
+    const emailInput = document.createElement('input');
+    emailInput.type = 'email';
+    emailInput.className = 'sunny-verification-flow__input';
+    emailInput.placeholder = 'Enter your email';
+    emailInput.disabled = waitingForCode || isSendingCode;
+
+    // Phone input
+    const phoneInput = document.createElement('input');
+    phoneInput.type = 'tel';
+    phoneInput.className = 'sunny-verification-flow__input';
+    phoneInput.placeholder = 'Enter your phone number';
+    phoneInput.style.display = 'none';
+    phoneInput.disabled = waitingForCode || isSendingCode;
+
+    inputGroup.appendChild(methodToggle);
+    inputGroup.appendChild(emailInput);
+    inputGroup.appendChild(phoneInput);
+
+    // Code input (hidden initially) - 6 separate inputs for each digit
+    const codeGroup = document.createElement('div');
+    codeGroup.className = 'sunny-verification-flow__code-group';
+    codeGroup.style.display = 'none';
+
+    const codeInputsContainer = document.createElement('div');
+    codeInputsContainer.className = 'sunny-verification-flow__code-inputs';
+    const codeInputs: HTMLInputElement[] = [];
+
+    // Create 6 separate input boxes
+    for (let i = 0; i < 6; i++) {
+      const codeInput = document.createElement('input');
+      codeInput.type = 'text';
+      codeInput.className = 'sunny-verification-flow__code-input';
+      codeInput.maxLength = 1;
+      codeInput.inputMode = 'numeric';
+      codeInput.pattern = '[0-9]';
+      codeInput.disabled = isVerifyingCode;
+      codeInput.setAttribute('aria-label', `Digit ${i + 1} of verification code`);
+
+      // Only allow numeric input
+      codeInput.addEventListener('input', (e) => {
+        const target = e.target as HTMLInputElement;
+        const value = target.value.replace(/\D/g, '');
+        target.value = value.slice(0, 1);
+
+        // Auto-focus next input if digit entered
+        if (value && i < 5) {
+          codeInputs[i + 1].focus();
+        }
+      });
+
+      // Handle backspace to go to previous input
+      codeInput.addEventListener('keydown', (e) => {
+        const target = e.target as HTMLInputElement;
+        if (e.key === 'Backspace' && !target.value && i > 0) {
+          e.preventDefault();
+          codeInputs[i - 1].focus();
+        }
+      });
+
+      // Handle paste event
+      codeInput.addEventListener('paste', (e) => {
+        e.preventDefault();
+        const pastedData = (e.clipboardData?.getData('text') || '').replace(/\D/g, '').slice(0, 6);
+        for (let j = 0; j < Math.min(pastedData.length, 6); j++) {
+          codeInputs[j].value = pastedData[j];
+        }
+        // Focus the next empty input or the last one
+        const nextEmptyIndex = Math.min(pastedData.length, 5);
+        codeInputs[nextEmptyIndex].focus();
+      });
+
+      codeInputs.push(codeInput);
+      codeInputsContainer.appendChild(codeInput);
+    }
+
+    codeGroup.appendChild(codeInputsContainer);
+
+    // Helper function to get the full code from all inputs
+    const getCode = (): string => {
+      return codeInputs.map(input => input.value).join('');
+    };
+
+    // Helper function to clear all code inputs
+    const clearCodeInputs = () => {
+      codeInputs.forEach(input => {
+        input.value = '';
+      });
+    };
+
+    // Status message
+    const statusMessage = document.createElement('div');
+    statusMessage.className = 'sunny-verification-flow__status';
+
+    // Action button
+    const actionButton = document.createElement('button');
+    actionButton.type = 'submit';
+    actionButton.className = 'sunny-verification-flow__button';
+    actionButton.textContent = 'Send Code';
+    actionButton.disabled = isSendingCode || isVerifyingCode;
+
+    // Success message (hidden initially)
+    const successMessage = document.createElement('div');
+    successMessage.className = 'sunny-verification-flow__success';
+    successMessage.style.display = 'none';
+    successMessage.textContent = '✓ Verification successful! You are now authenticated.';
+
+    const updateUI = () => {
+      if (waitingForCode) {
+        actionButton.textContent = 'Verify Code';
+        codeGroup.style.display = 'block';
+        emailInput.disabled = true;
+        phoneInput.disabled = true;
+      } else {
+        actionButton.textContent = 'Send Code';
+        codeGroup.style.display = 'none';
+        emailInput.disabled = isSendingCode;
+        phoneInput.disabled = isSendingCode;
+      }
+      codeInputs.forEach(input => {
+        input.disabled = isVerifyingCode;
+      });
+      actionButton.disabled = isSendingCode || isVerifyingCode;
+    };
+
+    const showStatus = (message: string, type: 'success' | 'error' | 'info') => {
+      statusMessage.textContent = message;
+      statusMessage.className = `sunny-verification-flow__status sunny-verification-flow__status--${type}`;
+      statusMessage.style.display = 'block';
+    };
+
+    const hideStatus = () => {
+      statusMessage.style.display = 'none';
+    };
+
+    const handleSubmit = async () => {
+      if (isSendingCode || isVerifyingCode) return;
+
+      hideStatus();
+
+      if (!waitingForCode) {
+        // Start login flow
+        const email = emailInput.value.trim();
+        const phone = phoneInput.value.trim();
+
+        if (useEmail && !email) {
+          showStatus('Please enter your email', 'error');
+          return;
+        }
+        if (!useEmail && !phone) {
+          showStatus('Please enter your phone number', 'error');
+          return;
+        }
+
+        isSendingCode = true;
+        updateUI();
+
+        try {
+          if (useEmail) {
+            await authManager.startLogin({ email });
+            currentEmail = email;
+            currentPhone = null;
+            showStatus(`Verification code sent to ${email}`, 'success');
+          } else {
+            await authManager.startLogin({ phoneNumber: phone });
+            currentPhone = phone;
+            currentEmail = null;
+            showStatus(`Verification code sent to ${phone}`, 'success');
+          }
+          waitingForCode = true;
+          isSendingCode = false;
+          updateUI();
+          clearCodeInputs();
+          codeInputs[0].focus();
+        } catch (error) {
+          showStatus(`Failed to send code: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
+          isSendingCode = false;
+          updateUI();
+        }
+      } else {
+        // Verify code
+        const code = getCode();
+        if (!code || code.length !== 6) {
+          showStatus('Please enter the complete 6-digit code', 'error');
+          return;
+        }
+        if (!/^\d{6}$/.test(code)) {
+          showStatus('Please enter a valid 6-digit code', 'error');
+          return;
+        }
+
+        isVerifyingCode = true;
+        updateUI();
+
+        try {
+          await authManager.verifyCode({
+            email: currentEmail ?? undefined,
+            phoneNumber: currentPhone ?? undefined,
+            code,
+          });
+
+          const idToken = authManager.getIdToken();
+          if (idToken && config?.tokenExchange) {
+            // Update the client's token provider
+            client.setIdTokenProvider(() => Promise.resolve(idToken));
+          }
+
+          // Show success
+          successMessage.style.display = 'block';
+          form.style.display = 'none';
+          showStatus('', 'success');
+
+          // Send hidden message to LLM indicating successful authentication
+          // Wait a brief moment for migration events to be processed if migrateHistory is enabled
+          try {
+            // Small delay to allow migration events to be processed (they arrive before auth.upgraded)
+            await new Promise(resolve => setTimeout(resolve, 100));
+
+            const snap = client.getSnapshot();
+            const conversationId = snap.activeConversationId ?? snap.conversations[0]?.id;
+            if (conversationId) {
+              await client.sendMessage('{hidden_message}"auth_success"{hidden_message/}', {
+                conversationId,
+              });
+            }
+          } catch (error) {
+            // Silently fail - hidden message is not critical for UI
+            console.warn('[VanillaChat] Failed to send auth success message:', error);
+          }
+
+          // Notify auth state change listeners
+          authManager.onAuthStateChange(() => {
+            // Auth state updated
+          });
+        } catch (error) {
+          showStatus(`Verification failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
+          isVerifyingCode = false;
+          updateUI();
+        }
+      }
+    };
+
+    form.addEventListener('submit', handleSubmit);
+    actionButton.addEventListener('click', handleSubmit);
+
+    form.appendChild(inputGroup);
+    form.appendChild(codeGroup);
+    form.appendChild(statusMessage);
+    form.appendChild(actionButton);
+
+    card.appendChild(form);
+    card.appendChild(successMessage);
+
+    return card;
+  };
+
   const createExpandedProviderCard = (data: any) => {
     const card = document.createElement('div');
     card.className = 'sunny-provider-card';
@@ -471,7 +820,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       rating: data.rating || data.rank_score,
       estimatedOop: data.estimated_oop_cost,
     };
-    
+
     renderProviderProfile(card, profile);
     return card;
   };
@@ -483,6 +832,165 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     const profile = normalizeDoctorProfile(data);
     renderProviderProfile(card, profile);
     return card;
+  };
+
+  const createProviderSearchResultsCard = (data: ProviderSearchResultsArtifact): HTMLElement[] => {
+    if (!data || !Array.isArray(data.providers) || data.providers.length === 0) {
+      const errorCard = document.createElement('div');
+      errorCard.className = 'sunny-provider-search-results__error';
+      errorCard.textContent = 'No providers found';
+      return [errorCard];
+    }
+
+    // Return individual provider cards
+    const cards: HTMLElement[] = [];
+
+    data.providers.forEach((provider: ProviderResult) => {
+      const providerCard = document.createElement('div');
+      providerCard.className = 'sunny-provider-search-results__provider';
+
+      // Get closest location for distance display
+      let closestLocation: ProviderResult['locations'][0] | null = null;
+      let distanceMiles: number | null = null;
+      if (Array.isArray(provider.locations) && provider.locations.length > 0) {
+        const sortedLocations = [...provider.locations].sort((a: any, b: any) =>
+          (a.distance_miles ?? Infinity) - (b.distance_miles ?? Infinity)
+        );
+        closestLocation = sortedLocations[0];
+        distanceMiles = closestLocation.distance_miles ?? null;
+      }
+
+      // Provider name from name field (per documented structure)
+      // Handle null name field and fallback to constructing from first_name/last_name if available
+      let providerName: string | null = provider.name;
+
+      // Fallback: if name is null, try to construct from first_name/last_name (for backward compatibility)
+      if (!providerName) {
+        const providerAny = provider as any;
+        if (providerAny.first_name || providerAny.last_name) {
+          const firstName = providerAny.first_name || '';
+          const lastName = providerAny.last_name || '';
+          providerName = [firstName, lastName].filter(Boolean).join(' ').trim() || null;
+        }
+      }
+
+      // Additional fallback: use location name if provider name is still unavailable
+      if (!providerName && closestLocation?.name) {
+        providerName = closestLocation.name;
+      }
+
+      // Final fallback
+      if (!providerName) {
+        providerName = 'Unknown Provider';
+      }
+
+      // Initials from name field
+      let initials = '?';
+      if (providerName && providerName !== 'Unknown Provider') {
+        const nameParts = providerName.split(' ').filter(Boolean);
+        if (nameParts.length >= 2) {
+          initials = `${nameParts[0][0]}${nameParts[nameParts.length - 1][0]}`.toUpperCase();
+        } else if (nameParts.length === 1) {
+          initials = nameParts[0].slice(0, 2).toUpperCase();
+        }
+      }
+
+      // Content container (flex layout)
+      const contentContainer = document.createElement('div');
+      contentContainer.className = 'sunny-provider-search-results__provider-content';
+
+      // Avatar column
+      const avatarColumn = document.createElement('div');
+      avatarColumn.className = 'sunny-provider-search-results__provider-avatar-column';
+
+      // Avatar
+      const avatar = document.createElement('div');
+      avatar.className = 'sunny-provider-search-results__provider-avatar';
+      avatar.textContent = initials || '?';
+      avatarColumn.appendChild(avatar);
+
+      // Distance below avatar
+      if (distanceMiles !== null) {
+        const distanceDiv = document.createElement('div');
+        distanceDiv.className = 'sunny-provider-search-results__provider-distance';
+        distanceDiv.innerHTML = `
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+          </svg>
+          <span>${distanceMiles.toFixed(1)} mi</span>
+        `;
+        avatarColumn.appendChild(distanceDiv);
+      }
+
+      contentContainer.appendChild(avatarColumn);
+
+      // Info column
+      const infoColumn = document.createElement('div');
+      infoColumn.className = 'sunny-provider-search-results__provider-info-column';
+
+      // Header with name and specialty
+      const header = document.createElement('div');
+      header.className = 'sunny-provider-search-results__provider-header';
+
+      // Name row with provider name and location name
+      const nameRow = document.createElement('div');
+      nameRow.className = 'sunny-provider-search-results__provider-name-row';
+
+      const nameEl = document.createElement('div');
+      nameEl.className = 'sunny-provider-search-results__provider-name';
+      nameEl.textContent = providerName;
+      nameRow.appendChild(nameEl);
+
+      // Location name inline next to provider name
+      if (closestLocation?.name) {
+        const locationNameEl = document.createElement('div');
+        locationNameEl.className = 'sunny-provider-search-results__provider-location-name';
+        locationNameEl.textContent = closestLocation.name;
+        nameRow.appendChild(locationNameEl);
+      }
+
+      header.appendChild(nameRow);
+
+      // Specialty
+      if (Array.isArray(provider.specialties) && provider.specialties.length > 0) {
+        const specialtyEl = document.createElement('div');
+        specialtyEl.className = 'sunny-provider-search-results__provider-specialty';
+        specialtyEl.textContent = provider.specialties.join(', ');
+        header.appendChild(specialtyEl);
+      }
+
+      infoColumn.appendChild(header);
+
+      // Location (address only, location name is now in header)
+      if (closestLocation) {
+        const addressParts = [
+          closestLocation.address_line_1,
+          closestLocation.address_line_2,
+          closestLocation.city,
+          closestLocation.state,
+          closestLocation.zip
+        ].filter(Boolean);
+        const address = addressParts.join(', ');
+
+        if (address) {
+          const locationDiv = document.createElement('div');
+          locationDiv.className = 'sunny-provider-search-results__provider-location';
+
+          const locationNameEl = document.createElement('div');
+          locationNameEl.className = 'sunny-provider-search-results__location-name';
+          locationNameEl.textContent = address;
+          locationDiv.appendChild(locationNameEl);
+
+          infoColumn.appendChild(locationDiv);
+        }
+      }
+
+      contentContainer.appendChild(infoColumn);
+      providerCard.appendChild(contentContainer);
+      cards.push(providerCard);
+    });
+
+    return cards;
   };
 
   const renderProviderProfile = (card: HTMLElement, profile: ProviderCardViewModel) => {
@@ -616,14 +1124,28 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     const text = modalInput.value.trim();
     if (!text) return;
     setExpanded(true);
-    await ensureConversation();
-    await client.sendMessage(text, { conversationId: persistedConversationId });
-    modalInput.value = '';
-    render();
+    try {
+      await ensureConversation();
+      await client.sendMessage(text, { conversationId: persistedConversationId });
+      modalInput.value = '';
+      render();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to send message';
+      console.error('[VanillaChat] Error sending message:', errorMessage);
+      // Restore the text to the input so user can retry
+      modalInput.value = text;
+      throw error; // Re-throw so handleModalSendClick can show alert
+    }
   };
 
   // Modal send button
-  const handleModalSendClick = () => { void send(); };
+  const handleModalSendClick = () => {
+    void send().catch((error) => {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to send message';
+      console.error('[VanillaChat] Error sending message:', errorMessage);
+      alert(`Failed to connect: ${errorMessage}\n\nMake sure the WebSocket server is running at the configured URL.`);
+    });
+  };
   modalSendBtn.addEventListener('click', handleModalSendClick);
 
   // Send from trigger input (first message)
@@ -635,10 +1157,19 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     triggerInput.value = '';
     setExpanded(true);
     // Now send the message
-    await ensureConversation();
-    await client.sendMessage(text, { conversationId: persistedConversationId });
-    modalInput.value = '';
-    render();
+    try {
+      await ensureConversation();
+      await client.sendMessage(text, { conversationId: persistedConversationId });
+      modalInput.value = '';
+      render();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to send message';
+      console.error('[VanillaChat] Error sending message:', errorMessage);
+      // Restore the text to the input so user can retry
+      modalInput.value = text;
+      // Show error to user (you might want to add a toast/alert here)
+      alert(`Failed to connect: ${errorMessage}\n\nMake sure the WebSocket server is running at the configured URL.`);
+    }
   };
 
   // Trigger send button: send message and open modal
@@ -699,16 +1230,11 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     client.on('streamingDelta', () => render()),
     client.on('streamingDone', () => render()),
     client.on('conversationCreated', ({ conversationId }) => {
-      // If server generated a different ID than our persisted one, update localStorage
+      // If server generated a different ID than our in-memory one, update our reference
       // This happens when authenticated and server creates the conversation
       if (conversationId !== persistedConversationId && !anonymous) {
-        try {
-          window.localStorage.setItem(conversationStorageKey, conversationId);
-          // Update our local reference for future sends
-          persistedConversationId = conversationId;
-        } catch {
-          // Ignore localStorage errors
-        }
+        // Update our local in-memory reference for future sends
+        persistedConversationId = conversationId;
       }
     }),
   );
@@ -1213,6 +1739,114 @@ function ensureStyles() {
     opacity: 0.75;
   }
 
+  /* Provider Search Results - Individual Cards */
+  .sunny-provider-search-results__provider {
+    margin: 12px 0;
+    border: 1px solid rgba(14, 165, 233, 0.2);
+    border-radius: 12px;
+    padding: 16px;
+    background: linear-gradient(to bottom right, rgba(240, 249, 255, 1), rgba(239, 246, 255, 1));
+    box-shadow: var(--sunny-shadow-sm);
+    transition: border-color var(--sunny-transition-fast), box-shadow var(--sunny-transition-fast);
+  }
+  .sunny-provider-search-results__provider:hover {
+    border-color: rgba(14, 165, 233, 0.3);
+    box-shadow: var(--sunny-shadow-md);
+  }
+  .sunny-provider-search-results__provider-content {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .sunny-provider-search-results__provider-avatar-column {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  .sunny-provider-search-results__provider-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: rgba(14, 165, 233, 0.1);
+    border: 2px solid rgba(14, 165, 233, 0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(14, 165, 233, 0.6);
+    font-size: 20px;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+  .sunny-provider-search-results__provider-distance {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 12px;
+    color: var(--sunny-gray-500);
+    line-height: 1;
+  }
+  .sunny-provider-search-results__provider-distance svg {
+    width: 12px;
+    height: 12px;
+    stroke: currentColor;
+  }
+  .sunny-provider-search-results__provider-info-column {
+    flex: 1;
+    min-width: 0;
+  }
+  .sunny-provider-search-results__provider-header {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 8px;
+  }
+  .sunny-provider-search-results__provider-name-row {
+    display: flex;
+    flex-direction: row;
+    align-items: baseline;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .sunny-provider-search-results__provider-name {
+    font-weight: 700;
+    font-size: 16px;
+    color: var(--sunny-color-secondary);
+    line-height: 1.4;
+  }
+  .sunny-provider-search-results__provider-location-name {
+    font-size: 14px;
+    color: rgba(14, 165, 233, 0.7);
+    font-weight: 400;
+    line-height: 1.4;
+  }
+  .sunny-provider-search-results__provider-location-name::before {
+    content: '•';
+    margin-right: 8px;
+    color: rgba(14, 165, 233, 0.5);
+  }
+  .sunny-provider-search-results__provider-specialty {
+    font-size: 12px;
+    color: rgba(14, 165, 233, 0.8);
+    font-weight: 500;
+    line-height: 1.4;
+  }
+  .sunny-provider-search-results__provider-location {
+    margin-top: 8px;
+  }
+  .sunny-provider-search-results__location-name {
+    font-size: 14px;
+    color: var(--sunny-color-secondary);
+    line-height: 1.5;
+  }
+  .sunny-provider-search-results__error {
+    padding: 16px;
+    text-align: center;
+    color: var(--sunny-gray-500);
+    font-size: 14px;
+  }
+
   /* Approval Cards */
   .sunny-approval-list {
     display: flex;
@@ -1312,6 +1946,181 @@ function ensureStyles() {
     font-weight: 500;
   }
 
+  /* Verification Flow */
+  .sunny-verification-flow {
+    margin: 12px 0;
+    border: 1px solid var(--sunny-gray-200);
+    border-radius: 12px;
+    padding: 20px;
+    background: var(--sunny-gray-50);
+  }
+  .sunny-verification-flow--error {
+    border-color: var(--sunny-color-danger);
+    background: #fef2f2;
+  }
+  .sunny-verification-flow__error {
+    color: var(--sunny-color-danger);
+    font-size: 14px;
+    text-align: center;
+    padding: 12px;
+  }
+  .sunny-verification-flow__form {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .sunny-verification-flow__method-toggle {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .sunny-verification-flow__tab {
+    flex: 1;
+    padding: 8px 16px;
+    border: 1px solid var(--sunny-gray-300);
+    background: #fff;
+    color: var(--sunny-gray-600);
+    border-radius: 8px 8px 0 0;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background var(--sunny-transition-fast), border-color var(--sunny-transition-fast), color var(--sunny-transition-fast);
+    font-family: inherit;
+  }
+  .sunny-verification-flow__tab:hover {
+    background: var(--sunny-gray-100);
+    border-color: var(--sunny-gray-400);
+  }
+  .sunny-verification-flow__tab--active {
+    background: var(--sunny-color-primary);
+    color: #fff;
+    border-color: var(--sunny-color-primary);
+  }
+  .sunny-verification-flow__tab--active:hover {
+    background: var(--sunny-color-primary-hover);
+    border-color: var(--sunny-color-primary-hover);
+  }
+  .sunny-verification-flow__input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .sunny-verification-flow__input {
+    width: 100%;
+    padding: 12px 16px;
+    border: 1px solid var(--sunny-gray-300);
+    border-radius: 8px;
+    font-size: 15px;
+    font-family: inherit;
+    background: #fff;
+    color: var(--sunny-color-secondary);
+    transition: border-color var(--sunny-transition-fast), box-shadow var(--sunny-transition-fast);
+    outline: none;
+  }
+  .sunny-verification-flow__input:focus {
+    border-color: var(--sunny-color-primary);
+    box-shadow: 0 0 0 3px var(--sunny-color-primary-ring);
+  }
+  .sunny-verification-flow__input:disabled {
+    background: var(--sunny-gray-100);
+    color: var(--sunny-gray-500);
+    cursor: not-allowed;
+  }
+  .sunny-verification-flow__input::placeholder {
+    color: var(--sunny-gray-500);
+  }
+  .sunny-verification-flow__code-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .sunny-verification-flow__code-inputs {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+  }
+  .sunny-verification-flow__code-input {
+    width: 48px;
+    height: 56px;
+    padding: 0;
+    border: 1px solid var(--sunny-gray-300);
+    border-radius: 8px;
+    font-size: 24px;
+    font-weight: 600;
+    text-align: center;
+    font-family: inherit;
+    background: #fff;
+    color: var(--sunny-color-secondary);
+    transition: border-color var(--sunny-transition-fast), box-shadow var(--sunny-transition-fast);
+    outline: none;
+  }
+  .sunny-verification-flow__code-input:focus {
+    border-color: var(--sunny-color-primary);
+    box-shadow: 0 0 0 3px var(--sunny-color-primary-ring);
+  }
+  .sunny-verification-flow__code-input:disabled {
+    background: var(--sunny-gray-100);
+    color: var(--sunny-gray-500);
+    cursor: not-allowed;
+  }
+  .sunny-verification-flow__status {
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 14px;
+    line-height: 1.5;
+    display: none;
+  }
+  .sunny-verification-flow__status--success {
+    background: var(--sunny-color-accent-bg);
+    color: #15803d;
+    border: 1px solid var(--sunny-color-accent);
+  }
+  .sunny-verification-flow__status--error {
+    background: #fef2f2;
+    color: var(--sunny-color-danger);
+    border: 1px solid var(--sunny-color-danger);
+  }
+  .sunny-verification-flow__status--info {
+    background: rgba(0, 111, 255, 0.1);
+    color: var(--sunny-color-primary);
+    border: 1px solid var(--sunny-color-primary);
+  }
+  .sunny-verification-flow__button {
+    width: 100%;
+    padding: 12px 20px;
+    background: var(--sunny-color-primary);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background var(--sunny-transition-fast), transform var(--sunny-transition-fast), box-shadow var(--sunny-transition-fast);
+    font-family: inherit;
+    box-shadow: 0 2px 8px var(--sunny-color-primary-shadow);
+  }
+  .sunny-verification-flow__button:hover:not(:disabled) {
+    background: var(--sunny-color-primary-hover);
+    box-shadow: 0 4px 12px var(--sunny-color-primary-shadow);
+  }
+  .sunny-verification-flow__button:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+  .sunny-verification-flow__button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  .sunny-verification-flow__success {
+    padding: 16px;
+    background: var(--sunny-color-accent-bg);
+    border: 1px solid var(--sunny-color-accent);
+    border-radius: 8px;
+    color: #15803d;
+    font-size: 14px;
+    font-weight: 500;
+    text-align: center;
+  }
+
   /* Responsive */
   @media (max-width: 640px) {
     .sunny-chat-modal {
@@ -1347,17 +2156,6 @@ function generateUuid(): string {
   return `${hex()}${hex()}-${hex()}-${hex()}-${hex()}-${hex()}${hex()}${hex()}`;
 }
 
-function getOrCreateConversationId(storageKey: string): string {
-  try {
-    const existing = window.localStorage.getItem(storageKey);
-    if (existing) return existing;
-    const id = generateUuid();
-    window.localStorage.setItem(storageKey, id);
-    return id;
-  } catch {
-    return generateUuid();
-  }
-}
 
 const USD_FORMATTER =
   typeof Intl !== 'undefined'
@@ -1395,11 +2193,11 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
   if (!text) return [];
   const segments: ArtifactSegment[] = [];
   let cursor = 0;
-  
+
   // Find all tag positions
-  type TagMatch = { type: 'expanded' | 'minimal' | 'legacy'; start: number; end: number; data?: any };
+  type TagMatch = { type: 'expanded' | 'minimal' | 'legacy' | 'provider_search_results' | 'verification_flow'; start: number; end: number; data?: any; action?: string };
   const tagMatches: TagMatch[] = [];
-  
+
   // Find raw JSON doctor profile objects (ChatArtifact format with item_type: "doctor_profile")
   // These appear as raw JSON objects in the text, e.g., {"item_type":"doctor_profile","item_content":{...}}
   let jsonCursor = 0;
@@ -1407,33 +2205,33 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
     // Look for JSON object start
     const start = text.indexOf('{', jsonCursor);
     if (start === -1) break;
-    
+
     // Try to find the matching closing brace by counting braces
     let braceCount = 0;
     let end = start;
     let inString = false;
     let escapeNext = false;
-    
+
     for (let i = start; i < text.length; i++) {
       const char = text[i];
-      
+
       if (escapeNext) {
         escapeNext = false;
         continue;
       }
-      
+
       if (char === '\\') {
         escapeNext = true;
         continue;
       }
-      
+
       if (char === '"') {
         inString = !inString;
         continue;
       }
-      
+
       if (inString) continue;
-      
+
       if (char === '{') {
         braceCount++;
       } else if (char === '}') {
@@ -1444,7 +2242,7 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
         }
       }
     }
-    
+
     if (braceCount === 0 && end > start) {
       // Found a complete JSON object, try to parse it
       const jsonStr = text.slice(start, end).trim();
@@ -1455,14 +2253,19 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
           // Extract item_content and create a legacy profile segment
           tagMatches.push({ type: 'legacy', start, end, data: artifact.item_content });
         }
+        // Check if it's a provider search results artifact
+        else if (artifact && typeof artifact === 'object' && artifact.item_type === 'provider_search_results' && artifact.item_content) {
+          // Extract item_content and create a provider search results segment
+          tagMatches.push({ type: 'provider_search_results', start, end, data: artifact.item_content });
+        }
       } catch {
         // Invalid JSON, skip
       }
     }
-    
+
     jsonCursor = end > start ? end : start + 1;
   }
-  
+
   // Find expanded doctor profile tags
   let expandedCursor = 0;
   while (expandedCursor < text.length) {
@@ -1480,7 +2283,7 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
     }
     expandedCursor = end + EXPANDED_DOCTOR_PROFILE_END.length;
   }
-  
+
   // Find minimal doctor profile tags
   let minimalCursor = 0;
   while (minimalCursor < text.length) {
@@ -1498,7 +2301,7 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
     }
     minimalCursor = end + MINIMAL_DOCTOR_PROFILE_END.length;
   }
-  
+
   // Find legacy doctor profile tags
   let legacyCursor = 0;
   while (legacyCursor < text.length) {
@@ -1516,17 +2319,33 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
     }
     legacyCursor = end + DOCTOR_PROFILE_END.length;
   }
-  
+
+  // Find verification flow tags
+  let verificationCursor = 0;
+  while (verificationCursor < text.length) {
+    const start = text.indexOf(VERIFICATION_FLOW_START, verificationCursor);
+    if (start === -1) break;
+    const contentStart = start + VERIFICATION_FLOW_START.length;
+    const end = text.indexOf(VERIFICATION_FLOW_END, contentStart);
+    if (end === -1) break;
+    // Extract content between tags (should be a quoted string like "init")
+    const content = text.slice(contentStart, end).trim();
+    // Remove quotes if present
+    const action = content.replace(/^["']|["']$/g, '') || 'init';
+    tagMatches.push({ type: 'verification_flow', start, end: end + VERIFICATION_FLOW_END.length, action });
+    verificationCursor = end + VERIFICATION_FLOW_END.length;
+  }
+
   // Sort matches by position
   tagMatches.sort((a, b) => a.start - b.start);
-  
+
   // Build segments
   for (const match of tagMatches) {
     // Add text before this tag
     if (match.start > cursor) {
       segments.push({ type: 'text', value: text.slice(cursor, match.start) });
     }
-    
+
     // Add the profile segment
     if (match.type === 'expanded') {
       segments.push({ type: 'expanded_profile', data: match.data });
@@ -1534,16 +2353,20 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
       segments.push({ type: 'minimal_profile', data: match.data });
     } else if (match.type === 'legacy') {
       segments.push({ type: 'legacy_profile', data: match.data });
+    } else if (match.type === 'provider_search_results') {
+      segments.push({ type: 'provider_search_results', data: match.data });
+    } else if (match.type === 'verification_flow') {
+      segments.push({ type: 'verification_flow', action: match.action || 'init' });
     }
-    
+
     cursor = match.end;
   }
-  
+
   // Add remaining text
   if (cursor < text.length) {
     segments.push({ type: 'text', value: text.slice(cursor) });
   }
-  
+
   return segments;
 }
 
