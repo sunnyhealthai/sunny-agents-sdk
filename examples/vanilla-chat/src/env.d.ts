@@ -9,6 +9,7 @@ declare global {
     readonly VITE_SUNNY_AUDIENCE?: string;
     readonly VITE_SUNNY_CLIENT_ID?: string;
     readonly VITE_SUNNY_TOKEN_EXCHANGE_URL?: string;
+    readonly VITE_SUNNY_DEV_ROUTE?: string;
     readonly VITE_AUTH0_DOMAIN?: string;
     readonly VITE_AUTH0_CLIENT_ID?: string;
     readonly VITE_BASE_URL?: string;

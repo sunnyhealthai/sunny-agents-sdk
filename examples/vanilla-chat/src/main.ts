@@ -13,6 +13,7 @@ const tokenExchangeConfig = clientId ? {
   audience: (import.meta.env.VITE_SUNNY_AUDIENCE as string | undefined) ?? 'https://api.sunnyhealthai-staging.com',
   clientId,
   tokenExchangeUrl: import.meta.env.VITE_SUNNY_TOKEN_EXCHANGE_URL as string | undefined,
+  devRoute: import.meta.env.VITE_SUNNY_DEV_ROUTE as string | undefined,
 } : undefined;
 
 const websocketUrl = (import.meta.env.VITE_SUNNY_WS_URL as string | undefined) ?? 'wss://llm.sunnyhealth.live';
@@ -376,7 +377,7 @@ if (tokenInput) {
   tokenInput.placeholder = 'ID Token (for token exchange)';
 }
 
-tokenForm?.addEventListener('submit', (event) => {
+tokenForm?.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (!tokenInput) return;
   const nextToken = tokenInput.value.trim();
@@ -387,7 +388,58 @@ tokenForm?.addEventListener('submit', (event) => {
     tokenLength: nextToken.length,
     isJWT: nextToken.split('.').length === 3,
   });
-  window.alert('ID Token saved to memory. The token will be lost on page reload.');
+
+  // Create a new idTokenProvider that uses the updated token
+  const updatedIdTokenProvider = async () => {
+    console.log('[VanillaChat] Using JWT token from memory for token exchange');
+    return inMemoryIdToken;
+  };
+
+  // Update the WebSocket manager's idTokenProvider to use the new token
+  if (tokenExchangeConfig) {
+    wsManager.setIdTokenProvider(updatedIdTokenProvider);
+    console.log('[VanillaChat] Updated WebSocket manager with new ID token provider');
+  }
+
+  // Reinitialize chat with the new token provider
+  chat.destroy();
+  chat = attachSunnyChat({
+    container: chatContainer!,
+    anonymous: false,
+    headerTitle: 'Sunny Chat',
+    placeholder: 'Ask about your benefits…',
+    colors: {
+      primary: '#048db4',
+      secondary: '#0c3c5c',
+      accent: '#168c55',
+    },
+    passwordlessAuth,
+    config: {
+      websocketUrl,
+      wsManager, // Share the same WebSocket manager
+      idTokenProvider: updatedIdTokenProvider,
+      ...(tokenExchangeConfig ? { tokenExchange: tokenExchangeConfig } : {}),
+    },
+  });
+
+  // Trigger auth upgrade to upgrade the WebSocket connection from anonymous to authenticated
+  if (tokenExchangeConfig) {
+    try {
+      console.log('[VanillaChat] Triggering auth upgrade with new token');
+      const upgradeSuccess = await wsManager.upgradeAuthIfPossible(false);
+      if (upgradeSuccess) {
+        console.log('[VanillaChat] Auth upgrade successful');
+      } else {
+        console.warn('[VanillaChat] Auth upgrade returned false - connection may still be anonymous');
+      }
+    } catch (error) {
+      console.error('[VanillaChat] Auth upgrade failed:', error);
+      // Don't block - allow chat to continue, upgrade will retry on first message
+    }
+  }
+
+  console.log('[VanillaChat] Chat reinitialized with new token');
+  window.alert('ID Token saved to memory. Chat has been reinitialized with token exchange.');
 });
 
 clearTokenBtn?.addEventListener('click', () => {
@@ -395,7 +447,48 @@ clearTokenBtn?.addEventListener('click', () => {
   if (tokenInput) {
     tokenInput.value = '';
   }
-  window.alert('ID Token cleared from memory.');
+
+  // Reinitialize chat in anonymous mode since token was cleared
+  // Check if we have passwordless auth as fallback
+  const hasPasswordlessAuth = passwordlessAuth.isAuthenticated();
+  const fallbackIdTokenProvider = hasPasswordlessAuth
+    ? async () => {
+      console.warn('[VanillaChat] Using passwordless user ID as ID token (may not work for token exchange)');
+      return passwordlessAuth.getUserId();
+    }
+    : undefined;
+
+  // Update WebSocket manager if we have a fallback, otherwise clear it
+  if (tokenExchangeConfig && fallbackIdTokenProvider) {
+    wsManager.setIdTokenProvider(fallbackIdTokenProvider);
+  } else if (tokenExchangeConfig) {
+    // Clear the idTokenProvider from WebSocket manager
+    wsManager.setIdTokenProvider(async () => null);
+  }
+
+  // Reinitialize chat
+  chat.destroy();
+  chat = attachSunnyChat({
+    container: chatContainer!,
+    anonymous: !hasPasswordlessAuth,
+    headerTitle: 'Sunny Chat',
+    placeholder: 'Ask about your benefits…',
+    colors: {
+      primary: '#048db4',
+      secondary: '#0c3c5c',
+      accent: '#168c55',
+    },
+    passwordlessAuth,
+    config: {
+      websocketUrl,
+      wsManager,
+      ...(fallbackIdTokenProvider ? { idTokenProvider: fallbackIdTokenProvider } : {}),
+      ...(tokenExchangeConfig && fallbackIdTokenProvider ? { tokenExchange: tokenExchangeConfig } : {}),
+    },
+  });
+
+  console.log('[VanillaChat] Chat reinitialized after token cleared');
+  window.alert('ID Token cleared from memory. Chat has been reinitialized.');
 });
 
 // Expose token exchange test function to window for debugging
