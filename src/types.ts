@@ -56,6 +56,10 @@ export interface SunnyAgentsConfig {
    */
   createServerConversations?: boolean;
   /**
+   * Partner identifier for websocket connection (used when tokenExchange not present, e.g. anonymous mode).
+   */
+  partnerName?: string;
+  /**
    * Token exchange configuration for converting ID tokens to access tokens.
    */
   tokenExchange?: {
@@ -400,6 +404,10 @@ export interface UnifiedSunnyChatOptions {
   container: HTMLElement;
   websocketUrl?: string;
   apiBaseUrl?: string;
+  /**
+   * Partner identifier for websocket (e.g., used in anonymous mode).
+   */
+  partnerName?: string;
   /**
    * Authentication configuration.
    * Provide either SAML/OIDC authentication via Auth0 or custom token exchange.

@@ -73,9 +73,12 @@ For anonymous chat without authentication:
 const chat = await createSunnyChat({
   container: document.getElementById("chat"),
   websocketUrl: "wss://llm.sunnyhealth.live",
+  partnerName: "your-partner-name",  // Optional: partner identifier for websocket
   anonymous: true,
 });
 ```
+
+**Note:** `partnerName` identifies the partner when connecting anonymously. It is passed as the `partner_identifier` query parameter on the websocket connection.
 
 ### Option 1: Drop-in Chat Widget (Advanced)
 
@@ -177,6 +180,8 @@ const client = new SunnyAgentsClient({
 - `tokenExchange.clientId`: Auth0 client ID for token exchange
 - `tokenExchange.tokenExchangeUrl`: Optional token exchange endpoint URL (defaults to `"https://auth.sunnyhealth.live/oauth/token"`)
 
+For anonymous mode (when `tokenExchange` is not used), you can pass `partnerName` at the top level of the config to identify the partner.
+
 ### Anonymous Mode
 
 For anonymous/local-only conversations, omit the `idTokenProvider` and `tokenExchange` configuration. The SDK will automatically operate in anonymous mode:
@@ -184,6 +189,7 @@ For anonymous/local-only conversations, omit the `idTokenProvider` and `tokenExc
 ```ts
 const client = new SunnyAgentsClient({
   websocketUrl: "wss://llm.sunnyhealth.live",
+  partnerName: "your-partner-name",  // Optional: partner identifier for websocket
   // No idTokenProvider or tokenExchange = anonymous mode
 });
 ```
@@ -193,6 +199,7 @@ Or explicitly disable server conversation creation:
 ```ts
 const client = new SunnyAgentsClient({
   websocketUrl: "wss://llm.sunnyhealth.live",
+  partnerName: "your-partner-name",  // Optional
   createServerConversations: false, // Explicitly disable server persistence
 });
 ```
@@ -204,10 +211,13 @@ attachSunnyChat({
   container: document.getElementById("sunny-chat"),
   config: {
     websocketUrl: "wss://llm.sunnyhealth.live",
+    partnerName: "your-partner-name",  // Optional: partner identifier for websocket
   },
   anonymous: true, // Enables anonymous mode (same as omitting idTokenProvider)
 });
 ```
+
+**Note:** `partnerName` can be passed in anonymous mode to identify the partner to the backend. It is sent as the `partner_identifier` query parameter on the websocket connection and the `x-sunny-partner-identifier` header on REST API requests.
 
 **Note:** `createServerConversations` defaults to `true` if both `idTokenProvider` and `tokenExchange` are provided, otherwise `false`. The `anonymous` option in `attachSunnyChat` sets `createServerConversations: false` when no token provider is configured.
 
@@ -491,6 +501,7 @@ createSunnyChat(options: UnifiedSunnyChatOptions): Promise<VanillaChatInstance>
 - `container: HTMLElement` - Container element to mount the chat widget
 - `websocketUrl?: string` - WebSocket URL for chat connection
 - `apiBaseUrl?: string` - Base URL for REST API calls (e.g., artifact fetching)
+- `partnerName?: string` - Partner identifier for websocket (e.g., used in anonymous mode). Passed as `partner_identifier` query param when connecting.
 - `auth?: AuthConfig` - Authentication configuration (mutually exclusive options):
   
   **Option 1: SAML/OIDC Authentication (`SamlOidcAuthConfig`)**
@@ -547,6 +558,7 @@ new SunnyAgentsClient(config?: SunnyAgentsConfig)
 - `websocketUrl?: string` - WebSocket URL for chat connection (defaults to `"wss://llm.sunnyhealth.live"`)
 - `wsManager?: LLMWebSocketManager` - Optional WebSocket manager instance to share across multiple clients. Allows sharing the same WebSocket connection between `PasswordlessAuthManager` and `SunnyAgentsClient` for seamless authentication. If not provided, a new `LLMWebSocketManager` will be created.
 - `idTokenProvider?: () => Promise<string | null>` - Function that returns an ID token for token exchange
+- `partnerName?: string` - Partner identifier for websocket connection (used when `tokenExchange` not present, e.g. anonymous mode). Passed as `partner_identifier` query param and `x-sunny-partner-identifier` header.
 - `tokenExchange?: TokenExchangeConfig` - Token exchange configuration (required if using `idTokenProvider`)
   - `partnerName: string` - Partner identifier (e.g., `"sunny-health-external-mock"`)
   - `audience: string` - API audience for access token (e.g., `"https://api.sunnyhealthai-staging.com"`)

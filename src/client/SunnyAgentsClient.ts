@@ -128,7 +128,7 @@ export class SunnyAgentsClient {
       sessionStorageKey: config.sessionStorageKey,
       idTokenProvider: config.idTokenProvider,
       tokenExchange: config.tokenExchange,
-      partnerName: config.tokenExchange?.partnerName,
+      partnerName: config.partnerName ?? config.tokenExchange?.partnerName,
     });
     this.apiBaseUrl = this.resolveApiBaseUrl(config);
 
@@ -778,8 +778,9 @@ export class SunnyAgentsClient {
       'Content-Type': 'application/json',
     };
 
-    if (this.config.tokenExchange?.partnerName) {
-      headers['x-sunny-partner-identifier'] = this.config.tokenExchange.partnerName;
+    const partnerName = this.config.partnerName ?? this.config.tokenExchange?.partnerName;
+    if (partnerName) {
+      headers['x-sunny-partner-identifier'] = partnerName;
     }
 
     const response = await fetch(`${this.apiBaseUrl}/v1/chat-artifacts/${artifactId}`, {

@@ -39,6 +39,15 @@ import type { UnifiedSunnyChatOptions, SunnyAgentsConfig, AuthConfig, SamlOidcAu
  *   },
  * });
  * ```
+ *
+ * @example
+ * ```ts
+ * // Anonymous chat with partner identifier
+ * const chat = await createSunnyChat({
+ *   container: document.getElementById('chat'),
+ *   partnerName: 'your-partner-name',
+ * });
+ * ```
  */
 export async function createSunnyChat(options: UnifiedSunnyChatOptions): Promise<VanillaChatInstance> {
   let auth0Provider: Auth0Provider | null = null;
@@ -120,6 +129,7 @@ export async function createSunnyChat(options: UnifiedSunnyChatOptions): Promise
   const config: SunnyAgentsConfig = {
     websocketUrl: options.websocketUrl,
     apiBaseUrl: options.apiBaseUrl,
+    partnerName: options.partnerName ?? tokenExchange?.partnerName,
     idTokenProvider,
     tokenExchange,
   };
