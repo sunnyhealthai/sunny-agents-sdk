@@ -36,6 +36,7 @@ import type { UnifiedSunnyChatOptions, SunnyAgentsConfig, AuthConfig, SamlOidcAu
  *     partnerName: 'your-partner-name',
  *     audience: 'https://api.sunnyhealthai-staging.com',
  *     clientId: 'your-client-id',
+ *     organization: 'your-organization-id',
  *   },
  * });
  * ```
@@ -119,6 +120,7 @@ export async function createSunnyChat(options: UnifiedSunnyChatOptions): Promise
         partnerName: authConfig.partnerName,
         audience: authConfig.audience,
         clientId: authConfig.clientId,
+        organization: authConfig.organization,
         tokenExchangeUrl: authConfig.tokenExchangeUrl,
         devRoute: authConfig.devRoute,
       };

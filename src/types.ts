@@ -72,6 +72,10 @@ export interface SunnyAgentsConfig {
      */
     clientId: string;
     /**
+     * Organization ID (required for token exchange).
+     */
+    organization: string;
+    /**
      * Token exchange endpoint URL.
      * Defaults to https://auth.sunnyhealth.live/oauth/token
      */
@@ -246,7 +250,7 @@ export interface Auth0ProviderConfig {
    */
   connection?: string;
   /**
-   * Optional organization ID or name.
+   * Optional organization ID.
    * Required for Auth0 clients configured to use organizations.
    */
   organization?: string;
@@ -318,7 +322,7 @@ export interface SamlOidcAuthConfig {
    */
   connection: string;
   /**
-   * Optional organization ID or name.
+   * Optional organization ID.
    * Required for Auth0 clients configured to use organizations.
    */
   organization?: string;
@@ -373,6 +377,10 @@ export interface TokenExchangeAuthConfig {
    * Auth0 client ID for token exchange.
    */
   clientId: string;
+  /**
+   * Organization ID (required for token exchange).
+   */
+  organization: string;
   /**
    * Token exchange endpoint URL.
    * Defaults to https://auth.sunnyhealth.live/oauth/token

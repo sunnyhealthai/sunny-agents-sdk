@@ -6,12 +6,14 @@ if (!chatContainer) {
   throw new Error('Missing #sunny-chat container');
 }
 
-// Token exchange configuration (only create if clientId is provided)
+// Token exchange configuration (only create if clientId and organization are provided)
 const clientId = import.meta.env.VITE_SUNNY_CLIENT_ID as string | undefined;
-const tokenExchangeConfig = clientId ? {
+const organization = import.meta.env.VITE_SUNNY_ORGANIZATION as string | undefined;
+const tokenExchangeConfig = clientId && organization ? {
   partnerName: (import.meta.env.VITE_SUNNY_PARTNER_NAME as string | undefined) ?? 'guardian-mock',
   audience: (import.meta.env.VITE_SUNNY_AUDIENCE as string | undefined) ?? 'https://api.sunnyhealthai-staging.com',
   clientId,
+  organization,
   tokenExchangeUrl: import.meta.env.VITE_SUNNY_TOKEN_EXCHANGE_URL as string | undefined,
   devRoute: import.meta.env.VITE_SUNNY_DEV_ROUTE as string | undefined,
 } : undefined;

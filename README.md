@@ -59,6 +59,7 @@ const chat = await createSunnyChat({
     partnerName: "your-partner-name",
     audience: "https://api.sunnyhealthai-staging.com",
     clientId: "your-client-id",
+    organization: "your-organization-id",
   },
 });
 ```
@@ -98,6 +99,7 @@ The easiest way to get started is with the pre-built chat widget:
         partnerName: "your-partner-name",
         audience: "https://api.sunnyhealthai-staging.com",
         clientId: "your-client-id",
+        organization: "your-organization-id",
       },
     },
     headerTitle: "Sunny Agents",
@@ -123,6 +125,7 @@ const client = new SunnyAgentsClient({
     partnerName: "your-partner-name",
     audience: "https://api.sunnyhealthai-staging.com",
     clientId: "your-client-id",
+    organization: "your-organization-id",
   },
 });
 
@@ -160,6 +163,7 @@ const client = new SunnyAgentsClient({
     partnerName: "your-partner-name", // e.g., "sunny-health-external-mock"
     audience: "https://api.sunnyhealthai-staging.com",
     clientId: "your-auth0-client-id",
+    organization: "your-organization-id",
     tokenExchangeUrl: "https://auth.sunnyhealth.live/oauth/token", // Optional, defaults to this
   },
 });
@@ -178,6 +182,7 @@ const client = new SunnyAgentsClient({
 - `tokenExchange.partnerName`: Partner identifier used to construct the subject token type (e.g., `"sunny-health-external-mock"`)
 - `tokenExchange.audience`: API audience for the access token (e.g., `"https://api.sunnyhealthai-staging.com"`)
 - `tokenExchange.clientId`: Auth0 client ID for token exchange
+- `tokenExchange.organization`: Organization ID (required for token exchange)
 - `tokenExchange.tokenExchangeUrl`: Optional token exchange endpoint URL (defaults to `"https://auth.sunnyhealth.live/oauth/token"`)
 
 For anonymous mode (when `tokenExchange` is not used), you can pass `partnerName` at the top level of the config to identify the partner.
@@ -332,6 +337,7 @@ const { client, destroy } = attachSunnyChat({
       partnerName: 'guardian',
       audience: 'https://api.sunnyhealthai-staging.com',
       clientId: 'your-auth0-client-id',
+      organization: 'your-organization-id',
     },
   },
 });
@@ -467,6 +473,7 @@ const wsManager = new LLMWebSocketManager({
     partnerName: 'your-partner-name',
     audience: 'https://api.sunnyhealthai-staging.com',
     clientId: 'your-client-id',
+    organization: 'your-organization-id',
   },
 });
 
@@ -476,6 +483,7 @@ const passwordlessAuth = new PasswordlessAuthManager({
     partnerName: 'your-partner-name',
     audience: 'https://api.sunnyhealthai-staging.com',
     clientId: 'your-client-id',
+    organization: 'your-organization-id',
   },
   migrateHistory: true,
 });
@@ -508,7 +516,7 @@ createSunnyChat(options: UnifiedSunnyChatOptions): Promise<VanillaChatInstance>
   - `domain: string` - Auth0 domain (e.g., `'your-tenant.auth0.com'`)
   - `clientId: string` - Auth0 client ID
   - `connection: string` - SAML/OIDC connection name - triggers automatic authentication
-  - `organization?: string` - Organization ID or name (required for some clients)
+  - `organization?: string` - Organization ID (required for some clients)
   - `audience?: string` - API audience for access tokens
   - `redirectUri?: string` - Callback URL after authentication (defaults to current origin + '/callback.html')
   - `usePopup?: boolean` - Use popup instead of redirect (default: `true`)
@@ -521,6 +529,7 @@ createSunnyChat(options: UnifiedSunnyChatOptions): Promise<VanillaChatInstance>
   - `partnerName: string` - Partner identifier
   - `audience: string` - API audience for access token
   - `clientId: string` - Auth0 client ID for token exchange
+  - `organization: string` - Organization ID (required for token exchange)
   - `tokenExchangeUrl?: string` - Token exchange endpoint URL
   - `devRoute?: string` - Developer route/destination
 
@@ -562,6 +571,7 @@ new SunnyAgentsClient(config?: SunnyAgentsConfig)
   - `partnerName: string` - Partner identifier (e.g., `"sunny-health-external-mock"`)
   - `audience: string` - API audience for access token (e.g., `"https://api.sunnyhealthai-staging.com"`)
   - `clientId: string` - Auth0 client ID for token exchange
+  - `organization: string` - Organization ID (required for token exchange)
   - `tokenExchangeUrl?: string` - Token exchange endpoint (defaults to `"https://auth.sunnyhealth.live/oauth/token"`)
 - `sessionStorageKey?: string` - localStorage key for session persistence (defaults to `"sunny_agents_session_id"`)
 - `initialConversationId?: string` - Initial conversation ID to use

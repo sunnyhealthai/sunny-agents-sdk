@@ -1,6 +1,6 @@
 {
   "name": "@sunnyhealthai/agents-sdk",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "description": "Embed the Sunny Agents chat experience inside any app.",
   "type": "module",
   "main": "dist/index.js",

@@ -2,6 +2,7 @@ export interface TokenExchangeConfig {
   partnerName: string;
   audience: string;
   clientId: string;
+  organization: string;
   tokenExchangeUrl?: string;
   devRoute?: string;
 }
@@ -49,6 +50,7 @@ export async function exchangeIdTokenForAccessToken(
     partnerName: config.partnerName,
     audience: config.audience,
     clientId: config.clientId,
+    organization: config.organization,
     subjectTokenType,
     devRoute: developerDestination,
     idTokenLength: idToken.length,
@@ -60,6 +62,7 @@ export async function exchangeIdTokenForAccessToken(
   formData.append('audience', config.audience);
   formData.append('subject_token_type', subjectTokenType);
   formData.append('subject_token', idToken);
+  formData.append('organization', config.organization);
   
   // Add dev-route to request body if available
   if (developerDestination) {
