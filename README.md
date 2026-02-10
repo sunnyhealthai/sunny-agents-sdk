@@ -102,7 +102,7 @@ For more control, use `attachSunnyChat()` directly with a `SunnyAgentsConfig`. T
   const { client, destroy } = attachSunnyChat({
     container: document.getElementById("sunny-chat"),
     config: {
-      websocketUrl: "wss://llm.sunnyhealth.live",
+      websocketUrl: "wss://chat.api.sunnyhealthai-staging.com",
       idTokenProvider: async () => localStorage.getItem("id_token"),
       tokenExchange: {
         partnerName: "your-partner-name",
@@ -128,7 +128,7 @@ For custom UI implementations, use the headless client:
 import { SunnyAgentsClient } from "@sunnyhealthai/agents-sdk";
 
 const client = new SunnyAgentsClient({
-  websocketUrl: "wss://llm.sunnyhealth.live",
+  websocketUrl: "wss://chat.api.sunnyhealthai-staging.com",
   idTokenProvider: async () => localStorage.getItem("id_token"),
   tokenExchange: {
     partnerName: "your-partner-name",
@@ -163,7 +163,7 @@ When using authenticated mode, provide an `idTokenProvider` function that return
 
 ```ts
 const client = new SunnyAgentsClient({
-  websocketUrl: "wss://llm.sunnyhealth.live",
+  websocketUrl: "wss://chat.api.sunnyhealthai-staging.com",
   idTokenProvider: async () => {
     // Return your ID token (e.g., from Auth0, Firebase, etc.)
     return localStorage.getItem("id_token");
@@ -217,7 +217,7 @@ For anonymous/local-only conversations, omit the `idTokenProvider` and `tokenExc
 
 ```ts
 const client = new SunnyAgentsClient({
-  websocketUrl: "wss://llm.sunnyhealth.live",
+  websocketUrl: "wss://chat.api.sunnyhealthai-staging.com",
   partnerName: "your-partner-name",  // Optional: partner identifier for websocket
   // No idTokenProvider or tokenExchange = anonymous mode
 });
@@ -227,7 +227,7 @@ Or explicitly disable server conversation creation:
 
 ```ts
 const client = new SunnyAgentsClient({
-  websocketUrl: "wss://llm.sunnyhealth.live",
+  websocketUrl: "wss://chat.api.sunnyhealthai-staging.com",
   partnerName: "your-partner-name",  // Optional
   createServerConversations: false, // Explicitly disable server persistence
 });
@@ -239,7 +239,7 @@ With the vanilla widget, you can use the `anonymous` option:
 attachSunnyChat({
   container: document.getElementById("sunny-chat"),
   config: {
-    websocketUrl: "wss://llm.sunnyhealth.live",
+    websocketUrl: "wss://chat.api.sunnyhealthai-staging.com",
     partnerName: "your-partner-name",  // Optional: partner identifier for websocket
   },
   anonymous: true, // Enables anonymous mode (same as omitting idTokenProvider)
@@ -325,7 +325,7 @@ if (!auth0Provider.isAuthenticated()) {
 
 // Use with SDK
 const client = new SunnyAgentsClient({
-  websocketUrl: "wss://llm.sunnyhealth.live",
+  websocketUrl: "wss://chat.api.sunnyhealthai-staging.com",
   idTokenProvider: () => Promise.resolve(auth0Provider.getIdToken()),
 });
 ```
@@ -386,7 +386,7 @@ import { PasswordlessAuthManager, LLMWebSocketManager, attachSunnyChat } from '@
 
 // Create shared WebSocket manager for passwordless auth and chat
 const wsManager = new LLMWebSocketManager({
-  websocketUrl: 'wss://llm.sunnyhealth.live',
+  websocketUrl: 'wss://chat.api.sunnyhealthai-staging.com',
 });
 
 // Initialize passwordless auth manager
@@ -418,7 +418,7 @@ const { client, destroy } = attachSunnyChat({
   container: document.getElementById('chat'),
   passwordlessAuth, // Enables verification flow UI in chat messages
   config: {
-    websocketUrl: 'wss://llm.sunnyhealth.live',
+    websocketUrl: 'wss://chat.api.sunnyhealthai-staging.com',
     wsManager, // Share the same WebSocket manager
   },
 });
@@ -482,7 +482,7 @@ createSunnyChat(options: UnifiedSunnyChatOptions): Promise<VanillaChatInstance>
 - `publicKey: string` - **Required** - Public API key (e.g., `"pk-sunnyagents_abc_xyz"`)
 - `authType: SdkAuthType` - **Required** - Authentication type: `'passwordless'`, `'saml'`, `'oidc'`, or `'tokenExchange'`
 - `idTokenProvider?: () => Promise<string | null>` - Function that returns an ID token. **Required** when `authType` is `'tokenExchange'`
-- `websocketUrl?: string` - Override WebSocket URL (default: `"wss://llm.sunnyhealth.live"`)
+- `websocketUrl?: string` - Override WebSocket URL (default: `"wss://chat.api.sunnyhealthai-staging.com"`)
 - `wsManager?: LLMWebSocketManager` - Share a WebSocket manager across instances
 - `devRoute?: string` - Developer route/destination for token exchange. If not provided, auto-extracted from URL query parameters (`?dev-route=...`)
 - `headerTitle?: string` - Title displayed in chat header (default: `"Sunny Agents"`)
@@ -523,7 +523,7 @@ new SunnyAgentsClient(config?: SunnyAgentsConfig)
 
 **Configuration Options (`SunnyAgentsConfig`):**
 
-- `websocketUrl?: string` - WebSocket URL for chat connection (defaults to `"wss://llm.sunnyhealth.live"`)
+- `websocketUrl?: string` - WebSocket URL for chat connection (defaults to `"wss://chat.api.sunnyhealthai-staging.com"`)
 - `wsManager?: LLMWebSocketManager` - Optional WebSocket manager instance to share across multiple clients. Allows sharing the same WebSocket connection between `PasswordlessAuthManager` and `SunnyAgentsClient` for seamless authentication. If not provided, a new `LLMWebSocketManager` will be created.
 - `idTokenProvider?: () => Promise<string | null>` - Function that returns an ID token for token exchange
 - `partnerName?: string` - Partner identifier for websocket connection (used when `tokenExchange` not present, e.g. anonymous mode). Passed as `partner_identifier` query param.

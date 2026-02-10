@@ -252,7 +252,7 @@ export interface UnifiedSunnyChatOptions {
   idTokenProvider?: () => Promise<string | null>;
 
   // --- Development / customization options ---
-  /** Override WebSocket URL (default: wss://llm.sunnyhealth.live). */
+  /** Override WebSocket URL (default: wss://chat.api.sunnyhealthai-staging.com). */
   websocketUrl?: string;
   /** Share a WebSocket manager across instances. */
   wsManager?: any; // LLMWebSocketManager - using any to avoid circular dependency

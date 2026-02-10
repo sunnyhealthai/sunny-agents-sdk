@@ -59,7 +59,7 @@ export class LLMWebSocketManager {
 
   constructor(config?: LLMWebSocketConfig) {
     this.config = {
-      websocketUrl: config?.websocketUrl ?? 'wss://llm.sunnyhealth.live',
+      websocketUrl: config?.websocketUrl ?? 'wss://chat.api.sunnyhealthai-staging.com',
       sessionStorageKey: config?.sessionStorageKey ?? 'sunny_agents_session_id',
       idTokenProvider: config?.idTokenProvider,
       tokenExchange: config?.tokenExchange,

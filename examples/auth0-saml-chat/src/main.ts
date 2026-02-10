@@ -3,7 +3,7 @@ import { createSunnyChat } from '@sunnyhealthai/agents-sdk';
 // Configuration from environment variables
 const partnerIdentifier = (import.meta.env.VITE_SUNNY_PARTNER_NAME as string | undefined) ?? '';
 const publicKey = (import.meta.env.VITE_SUNNY_PUBLIC_KEY as string | undefined) ?? '';
-const websocketUrl = (import.meta.env.VITE_SUNNY_WS_URL as string | undefined) ?? 'wss://llm.sunnyhealth.live';
+const websocketUrl = (import.meta.env.VITE_SUNNY_WS_URL as string | undefined) ?? 'wss://chat.api.sunnyhealthai-staging.com';
 
 // UI Elements
 const authStatusText = document.getElementById('auth-status-text') as HTMLElement;

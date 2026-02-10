@@ -10,7 +10,7 @@ if (!chatContainer) {
 const partnerIdentifier = (import.meta.env.VITE_SUNNY_PARTNER_NAME as string | undefined) ?? 'guardian-mock';
 const publicKey = (import.meta.env.VITE_SUNNY_PUBLIC_KEY as string | undefined) ?? '';
 const authType = ((import.meta.env.VITE_SUNNY_AUTH_TYPE as string | undefined) ?? 'passwordless') as SdkAuthType;
-const websocketUrl = (import.meta.env.VITE_SUNNY_WS_URL as string | undefined) ?? 'wss://llm.sunnyhealth.live';
+const websocketUrl = (import.meta.env.VITE_SUNNY_WS_URL as string | undefined) ?? 'wss://chat.api.sunnyhealthai-staging.com';
 const devRoute = import.meta.env.VITE_SUNNY_DEV_ROUTE as string | undefined;
 
 console.log('[VanillaChat] Config:', { partnerIdentifier, publicKey: publicKey ? `${publicKey.substring(0, 20)}...` : '(not set)', authType, websocketUrl, devRoute: devRoute ?? '(not set)' });
