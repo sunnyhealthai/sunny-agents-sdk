@@ -172,9 +172,10 @@ export class LLMWebSocketManager {
           wsUrl.searchParams.set('session_id', this.currentSessionId);
         }
 
-        // Include partner name if configured
-        if (this.config.partnerName) {
-          wsUrl.searchParams.set('partner_identifier', this.config.partnerName);
+        // Always include partner name if available (from config.partnerName or config.tokenExchange?.partnerName)
+        const partnerName = this.config.partnerName ?? this.config.tokenExchange?.partnerName;
+        if (partnerName) {
+          wsUrl.searchParams.set('partner_identifier', partnerName);
         }
 
         const finalWsUrl = wsUrl.toString();
