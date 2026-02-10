@@ -4,3 +4,4 @@ dist
 playground
 .npmrc
 doppler.yaml
+.DS_Store
