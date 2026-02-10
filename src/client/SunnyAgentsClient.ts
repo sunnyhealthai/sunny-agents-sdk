@@ -1,6 +1,5 @@
 import { LLMWebSocketManager } from './llmWebSocket';
 import type {
-  ChatArtifact,
   ConversationState,
   FileAttachment,
   SendMessageOptions,
@@ -114,9 +113,6 @@ export class SunnyAgentsClient {
   >();
   private activeConversationId: string | null = null;
   private readonly createServerConversations: boolean;
-  private readonly apiBaseUrl: string;
-  private readonly artifactCache = new Map<string, ChatArtifact>();
-  private readonly artifactRequestCache = new Map<string, Promise<ChatArtifact | null>>();
   private readonly serverCreatedConversations = new Set<string>();
   private readonly conversationCreationPromises = new Map<string, Promise<string>>();
   private readonly migratedConversationIds = new Map<string, string>(); // Maps old ID -> new ID
@@ -130,7 +126,6 @@ export class SunnyAgentsClient {
       tokenExchange: config.tokenExchange,
       partnerName: config.partnerName ?? config.tokenExchange?.partnerName,
     });
-    this.apiBaseUrl = this.resolveApiBaseUrl(config);
 
     // Default to server-created conversations only when we have an ID token provider.
     this.createServerConversations =
@@ -740,59 +735,6 @@ export class SunnyAgentsClient {
     this.conversations.set(ensuredId, next);
   }
 
-  async getArtifact<T = unknown>(artifactId: string): Promise<ChatArtifact<T> | null> {
-    if (!artifactId) return null;
-    if (this.artifactCache.has(artifactId)) {
-      return this.artifactCache.get(artifactId) as ChatArtifact<T>;
-    }
-    if (this.artifactRequestCache.has(artifactId)) {
-      return this.artifactRequestCache.get(artifactId) as Promise<ChatArtifact<T> | null>;
-    }
-    const request = this.fetchArtifact<T>(artifactId)
-      .then((artifact) => {
-        if (artifact) {
-          this.artifactCache.set(artifactId, artifact as ChatArtifact);
-        }
-        return artifact;
-      })
-      .finally(() => {
-        this.artifactRequestCache.delete(artifactId);
-      });
-    this.artifactRequestCache.set(artifactId, request as Promise<ChatArtifact | null>);
-    return request;
-  }
-
-  private async fetchArtifact<T = unknown>(artifactId: string): Promise<ChatArtifact<T> | null> {
-    if (!this.config.idTokenProvider || !this.config.tokenExchange) {
-      throw new Error('An idTokenProvider and tokenExchange config are required to fetch artifacts.');
-    }
-    
-    // Use the WebSocket manager's token exchange to get an access token
-    const token = await this.ws.getAccessToken();
-    if (!token) {
-      throw new Error('Unable to fetch artifact without an access token.');
-    }
-    
-    const headers: Record<string, string> = {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    };
-
-    const partnerName = this.config.partnerName ?? this.config.tokenExchange?.partnerName;
-    if (partnerName) {
-      headers['x-sunny-partner-identifier'] = partnerName;
-    }
-
-    const response = await fetch(`${this.apiBaseUrl}/v1/chat-artifacts/${artifactId}`, {
-      method: 'GET',
-      headers,
-    });
-    if (!response.ok) {
-      throw new Error(`Artifact request failed: ${response.status}`);
-    }
-    return (await response.json()) as ChatArtifact<T>;
-  }
-
   private updateMessage(conversationId: string, messageId: string, updater: (current: SunnyAgentMessage) => SunnyAgentMessage) {
     const ensuredId = this.ensureConversation(conversationId);
     const next = this.conversations.get(ensuredId)!;
@@ -861,14 +803,6 @@ export class SunnyAgentsClient {
   private shouldCreateServerConversations(): boolean {
     // Check config flag. The actual anonymous check happens in createConversation after connecting.
     return this.createServerConversations;
-  }
-
-  private resolveApiBaseUrl(config: SunnyAgentsConfig = {}): string {
-    if (config.apiBaseUrl) {
-      return config.apiBaseUrl.replace(/\/$/, '');
-    }
-    // Default to api.sunnyhealthai-staging.com for artifact endpoints
-    return 'https://api.sunnyhealthai-staging.com';
   }
 
   private emit<E extends keyof ClientEventMap>(event: E, payload: ClientEventMap[E]) {

@@ -2,7 +2,7 @@ import { createSunnyChat } from '@sunnyhealthai/agents-sdk';
 
 // Configuration from environment variables
 const websocketUrl = (import.meta.env.VITE_SUNNY_WS_URL as string | undefined) ?? 'wss://llm.sunnyhealth.live';
-const apiBaseUrl = (import.meta.env.VITE_SUNNY_AUDIENCE as string | undefined) ?? 'https://api.sunnyhealthai-staging.com';
+const audience = (import.meta.env.VITE_SUNNY_AUDIENCE as string | undefined) ?? 'https://api.sunnyhealthai-staging.com';
 
 // Auth0 configuration from environment variables
 const AUTH0_DOMAIN = (import.meta.env.VITE_AUTH0_DOMAIN as string | undefined) ?? '';
@@ -63,14 +63,13 @@ async function initializeChat() {
     chatInstance = await createSunnyChat({
       container: chatContainer,
       websocketUrl,
-      apiBaseUrl,
       auth: {
         type: 'saml', // or 'oidc' for OIDC connections
         domain,
         clientId,
         connection, // SAML connection name - triggers auto-login (required)
         organization,
-        audience: apiBaseUrl,
+        audience,
         usePopup: true,
         useModal: true,
         storageType: 'sessionStorage',

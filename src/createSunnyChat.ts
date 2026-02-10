@@ -128,7 +128,6 @@ export async function createSunnyChat(options: UnifiedSunnyChatOptions): Promise
   // Build SunnyAgentsConfig
   const config: SunnyAgentsConfig = {
     websocketUrl: options.websocketUrl,
-    apiBaseUrl: options.apiBaseUrl,
     partnerName: options.partnerName ?? tokenExchange?.partnerName,
     idTokenProvider,
     tokenExchange,

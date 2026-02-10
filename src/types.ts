@@ -46,11 +46,6 @@ export interface SunnyAgentsConfig {
   sessionStorageKey?: string;
   initialConversationId?: string;
   /**
-   * Base URL for REST API calls (e.g., fetching artifacts). Defaults to
-   * https://api.sunnyhealthai-staging.com.
-   */
-  apiBaseUrl?: string;
-  /**
    * Whether to create/persist conversations on the server.
    * Defaults to true if an idTokenProvider is supplied, otherwise false (anonymous).
    */
@@ -403,7 +398,6 @@ export type AuthConfig = SamlOidcAuthConfig | TokenExchangeAuthConfig;
 export interface UnifiedSunnyChatOptions {
   container: HTMLElement;
   websocketUrl?: string;
-  apiBaseUrl?: string;
   /**
    * Partner identifier for websocket (e.g., used in anonymous mode).
    */

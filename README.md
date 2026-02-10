@@ -500,7 +500,6 @@ createSunnyChat(options: UnifiedSunnyChatOptions): Promise<VanillaChatInstance>
 
 - `container: HTMLElement` - Container element to mount the chat widget
 - `websocketUrl?: string` - WebSocket URL for chat connection
-- `apiBaseUrl?: string` - Base URL for REST API calls (e.g., artifact fetching)
 - `partnerName?: string` - Partner identifier for websocket (e.g., used in anonymous mode). Passed as `partner_identifier` query param when connecting.
 - `auth?: AuthConfig` - Authentication configuration (mutually exclusive options):
   
@@ -564,7 +563,6 @@ new SunnyAgentsClient(config?: SunnyAgentsConfig)
   - `audience: string` - API audience for access token (e.g., `"https://api.sunnyhealthai-staging.com"`)
   - `clientId: string` - Auth0 client ID for token exchange
   - `tokenExchangeUrl?: string` - Token exchange endpoint (defaults to `"https://auth.sunnyhealth.live/oauth/token"`)
-- `apiBaseUrl?: string` - Base URL for REST API calls like artifact fetching (defaults to `"https://api.sunnyhealthai-staging.com"`)
 - `sessionStorageKey?: string` - localStorage key for session persistence (defaults to `"sunny_agents_session_id"`)
 - `initialConversationId?: string` - Initial conversation ID to use
 - `createServerConversations?: boolean` - Whether to create/persist conversations on server (defaults to `true` if `idTokenProvider` and `tokenExchange` are provided, otherwise `false`)
@@ -583,8 +581,6 @@ new SunnyAgentsClient(config?: SunnyAgentsConfig)
 - **`setActiveConversation(conversationId: string | null)`**: Set the active conversation ID.
 
 - **`getSnapshot()`**: Get current state snapshot. Returns `SunnyAgentsClientSnapshot` with `conversations` array and `activeConversationId`.
-
-- **`getArtifact<T>(artifactId: string)`**: Fetch a chat artifact by ID. Returns a Promise resolving to `ChatArtifact<T> | null`. Requires authenticated mode (`idTokenProvider` and `tokenExchange`).
 
 - **`sendMcpApproval(conversationId: string, approvalRequestId: string, approve: boolean, reason?: string | null)`**: Send an MCP approval response for a pending approval request.
 
@@ -644,25 +640,9 @@ await client.sendMessage("Analyze this image", {
 });
 ```
 
-## Artifact Fetching
+## Artifacts
 
-The SDK supports fetching chat artifacts (like doctor profiles) that are referenced in messages. Artifacts are automatically cached and can be fetched using the `getArtifact` method:
-
-```ts
-// Fetch an artifact by ID
-const artifact = await client.getArtifact<DoctorProfileArtifact>(
-  "artifact-id-here"
-);
-
-if (artifact) {
-  console.log("Artifact type:", artifact.item_type);
-  console.log("Content:", artifact.item_content);
-}
-```
-
-**Note:** Artifact fetching requires authenticated mode (`idTokenProvider` and `tokenExchange` configuration). The SDK uses the `apiBaseUrl` configuration option (defaults to `"https://api.sunnyhealthai-staging.com"`) to construct artifact fetch URLs.
-
-Artifacts are automatically cached, so subsequent calls with the same artifact ID will return the cached result without making another network request.
+Artifacts (like doctor profiles) are delivered **inline in message text** via the WebSocket. The backend expands artifact tags just-in-time (JIT) during streaming. Parse `message.text` for embedded JSON objects with `item_type` and `item_content`. The vanilla widget automatically parses and renders them. See the [documentation](https://docs.sunnyhealthai.com/artifacts) for parsing examples.
 
 ## Framework Integration
 
