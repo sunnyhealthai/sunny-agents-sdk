@@ -1,3 +1,4 @@
+import type { SdkAuthConfig } from '../types.js';
 import { TokenExchangeManager, type TokenExchangeConfig } from './tokenExchange.js';
 
 export type IdTokenProvider = () => Promise<string | null | undefined>;
@@ -11,6 +12,8 @@ export interface LLMWebSocketConfig {
   idTokenProvider?: IdTokenProvider;
   tokenExchange?: TokenExchangeConfig;
   partnerName?: string;
+  /** Public API key for SDK session creation. */
+  publicKey?: string;
 }
 
 // Session ID storage is now in-memory only (no localStorage persistence)
@@ -37,12 +40,21 @@ export class LLMWebSocketManager {
   private authUpgradeHandlers: Set<AuthUpgradeHandler> = new Set();
   private pendingAuthUpgrade: Promise<boolean> | null = null;
   private tokenExchangeManager: TokenExchangeManager | null = null;
+  /** Cached SDK auth config returned by sdk.session.created. */
+  private sdkAuthConfig: SdkAuthConfig | null = null;
+  /** Promise that resolves when sdk.session.created is received. */
+  private sdkSessionPromise: {
+    resolve: (config: SdkAuthConfig) => void;
+    reject: (error: Error) => void;
+  } | null = null;
+  private sdkSessionReady: Promise<SdkAuthConfig> | null = null;
   private config: {
     websocketUrl: string;
     sessionStorageKey: string;
     idTokenProvider?: IdTokenProvider;
     tokenExchange?: TokenExchangeConfig;
     partnerName?: string;
+    publicKey?: string;
   };
 
   constructor(config?: LLMWebSocketConfig) {
@@ -52,6 +64,7 @@ export class LLMWebSocketManager {
       idTokenProvider: config?.idTokenProvider,
       tokenExchange: config?.tokenExchange,
       partnerName: config?.partnerName,
+      publicKey: config?.publicKey,
     };
 
     // Initialize token exchange manager if both idTokenProvider and tokenExchange are provided
@@ -200,6 +213,33 @@ export class LLMWebSocketManager {
             // Handle session.started - store the server-provided session ID in memory only
             if (data.type === 'session.started') {
               this.currentSessionId = data.session_id;
+              // If publicKey is configured, send sdk.session.create to verify and get config
+              if (this.config.publicKey) {
+                console.log('[LLMWebSocket] Session started, sending sdk.session.create');
+                socket.send(JSON.stringify({
+                  type: 'sdk.session.create',
+                  api_key: this.config.publicKey,
+                }));
+              }
+            }
+            // Handle SDK session created - server returns auth config
+            else if (data.type === 'sdk.session.created') {
+              const config: SdkAuthConfig = data.config ?? {};
+              this.sdkAuthConfig = config;
+              console.log('[LLMWebSocket] SDK session created', { partner_id: data.partner_id, config });
+              if (this.sdkSessionPromise) {
+                this.sdkSessionPromise.resolve(config);
+                this.sdkSessionPromise = null;
+              }
+            }
+            // Handle SDK session creation failure
+            else if (data.type === 'sdk.session.create_failed') {
+              const error = new Error(`SDK session creation failed: ${data.error} (${data.code})`);
+              console.error('[LLMWebSocket] SDK session creation failed:', data.error, data.code);
+              if (this.sdkSessionPromise) {
+                this.sdkSessionPromise.reject(error);
+                this.sdkSessionPromise = null;
+              }
             }
             // Handle auth upgrade responses
             else if (data.type === 'auth.upgraded') {
@@ -416,6 +456,63 @@ export class LLMWebSocketManager {
       }
     }
     return null;
+  }
+
+  /**
+   * Waits for the SDK session to be created (sdk.session.created response).
+   * Must be called after connect() when publicKey is configured.
+   * Returns the server-provided SdkAuthConfig.
+   */
+  waitForSdkSession(): Promise<SdkAuthConfig> {
+    // If already received, return cached config
+    if (this.sdkAuthConfig) {
+      return Promise.resolve(this.sdkAuthConfig);
+    }
+
+    // If already waiting, return the existing promise
+    if (this.sdkSessionReady) {
+      return this.sdkSessionReady;
+    }
+
+    // Create a new promise that will be resolved when sdk.session.created arrives
+    this.sdkSessionReady = new Promise<SdkAuthConfig>((resolve, reject) => {
+      this.sdkSessionPromise = { resolve, reject };
+
+      // Timeout after 15 seconds
+      setTimeout(() => {
+        if (this.sdkSessionPromise) {
+          this.sdkSessionPromise.reject(new Error('SDK session creation timed out after 15 seconds'));
+          this.sdkSessionPromise = null;
+        }
+      }, 15000);
+    });
+
+    return this.sdkSessionReady;
+  }
+
+  /**
+   * Returns the cached SDK auth config, or null if not yet received.
+   */
+  getSdkAuthConfig(): SdkAuthConfig | null {
+    return this.sdkAuthConfig;
+  }
+
+  /**
+   * Configures token exchange using server-provided config and a client-provided ID token provider.
+   * Called by createSunnyChat after receiving SDK session config.
+   */
+  configureTokenExchange(idTokenProvider: IdTokenProvider, tokenExchangeConfig: TokenExchangeConfig): void {
+    this.config.idTokenProvider = idTokenProvider;
+    this.config.tokenExchange = tokenExchangeConfig;
+    this.tokenExchangeManager = new TokenExchangeManager(idTokenProvider, tokenExchangeConfig);
+    this.tokenProvider = async () => {
+      try {
+        return await this.tokenExchangeManager!.getAccessToken();
+      } catch (error) {
+        console.error('[LLMWebSocket] Token exchange failed:', error);
+        return null;
+      }
+    };
   }
 
   close(): void {

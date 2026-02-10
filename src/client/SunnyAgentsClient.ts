@@ -112,9 +112,21 @@ export class SunnyAgentsClient {
     Set<(payload: ClientEventMap[keyof ClientEventMap]) => void>
   >();
   private activeConversationId: string | null = null;
-  private readonly createServerConversations: boolean;
+  private createServerConversations: boolean;
   private readonly serverCreatedConversations = new Set<string>();
   private readonly conversationCreationPromises = new Map<string, Promise<string>>();
+  /** Pending conversation creations keyed by request_id for correlation with conversation.created */
+  private readonly pendingConversationCreations = new Map<
+    string,
+    { resolve: (id: string) => void; reject: (err: Error) => void; localId: string }
+  >();
+  /** Fallback queue when server doesn't echo request_id: resolves in FIFO order */
+  private readonly pendingConversationCreationQueue: Array<{
+    requestId: string;
+    resolve: (id: string) => void;
+    reject: (err: Error) => void;
+    localId: string;
+  }> = [];
   private readonly migratedConversationIds = new Map<string, string>(); // Maps old ID -> new ID
 
   constructor(private readonly config: SunnyAgentsConfig = {}) {
@@ -172,6 +184,14 @@ export class SunnyAgentsClient {
   setActiveConversation(conversationId: string | null) {
     this.activeConversationId = conversationId;
     this.notify();
+  }
+
+  /**
+   * Toggle whether conversations should be created on the server before sending messages.
+   * Used by createSunnyChat to update the flag when auth type changes at runtime.
+   */
+  setCreateServerConversations(value: boolean): void {
+    this.createServerConversations = value;
   }
 
   /**
@@ -311,70 +331,67 @@ export class SunnyAgentsClient {
         return existingPromise;
       }
 
-      // Create a promise that resolves when the conversation is created on the server
+      const requestId = randomId('conv');
       const creationPromise = (async () => {
         try {
-          // Ensure connection and auth before creating conversation
           await this.ensureConnectionAndAuth();
-          // If we're configured for server conversations, attempt to create on server
-          // The server will handle authentication - if we're anonymous, it will fail gracefully
-          // Don't send conversation_id - server generates its own ID
-          // The server will return the ID in conversation.created event
-          await this.ws.send({ type: 'conversation.create', name: title ?? null });
-          
-          // Wait for conversation.created event (with timeout)
-          const serverId = await new Promise<string>((resolve, reject) => {
-            const timeout = setTimeout(() => {
-              // Timeout: server didn't respond in time
-              // If we provided an ID, assume it failed and we should use server-generated
-              // For now, reject to indicate creation didn't complete
-              cleanup();
-              // Actually, let's resolve with the local ID and mark it - the server might have created it
-              // but the event was delayed. The sendMessage will handle the error if it doesn't exist.
-              resolve(id);
-            }, 5000); // 5 second timeout
-            
-            const handler = (payload: ClientEventMap['conversationCreated']) => {
-              const createdId = payload.conversationId;
-              cleanup();
-              resolve(createdId);
-            };
-            
-            const cleanup = () => {
-              clearTimeout(timeout);
-              this.off('conversationCreated', handler);
-            };
-            
-            this.on('conversationCreated', handler);
+          const pending: { resolve: (id: string) => void; reject: (err: Error) => void; localId: string } = {
+            resolve: () => {},
+            reject: () => {},
+            localId: id,
+          };
+          const innerPromise = new Promise<string>((resolve, reject) => {
+            pending.resolve = resolve;
+            pending.reject = reject;
           });
-          
-          // Server returned an ID - use it (may differ from our local ID)
-          // Update local conversation if IDs differ
+
+          this.pendingConversationCreations.set(requestId, pending);
+          this.pendingConversationCreationQueue.push({
+            requestId,
+            resolve: pending.resolve,
+            reject: pending.reject,
+            localId: id,
+          });
+
+          const timeout = setTimeout(() => {
+            const entry = this.pendingConversationCreations.get(requestId);
+            if (entry) {
+              this.pendingConversationCreations.delete(requestId);
+              const idx = this.pendingConversationCreationQueue.findIndex((e) => e.requestId === requestId);
+              if (idx >= 0) this.pendingConversationCreationQueue.splice(idx, 1);
+              entry.resolve(id);
+            }
+          }, 5000);
+
+          await this.ws.send({
+            type: 'conversation.create',
+            name: title ?? null,
+            request_id: requestId,
+          });
+
+          const serverId = await innerPromise;
+          clearTimeout(timeout);
+
           if (serverId !== id) {
             const localConvo = this.conversations.get(id);
             if (localConvo) {
-              // Move conversation to server ID
               this.conversations.delete(id);
               this.conversations.set(serverId, { ...localConvo, id: serverId });
             }
-            // Update active conversation if it was the one we just created
             if (this.activeConversationId === id) {
               this.activeConversationId = serverId;
             }
           }
-          
-          // Mark as server-created (will be confirmed by conversation.created event handler too)
+
           this.serverCreatedConversations.add(serverId);
           return serverId;
         } catch (error) {
-          // If connection/auth fails, stay local-only.
-          // Return local ID so the conversation can still be used locally
           return id;
         }
       })();
-      
+
       this.conversationCreationPromises.set(id, creationPromise);
-      
+
       try {
         const result = await creationPromise;
         this.conversationCreationPromises.delete(id);
@@ -524,13 +541,33 @@ export class SunnyAgentsClient {
 
     if (type === 'conversation.created') {
       const createdId = (raw as any).conversation?.id || (raw as any).conversation_id || conversationId;
+      const requestId = (raw as any).request_id ?? (raw as any).conversation?.request_id;
+      const title = (raw as any).conversation?.title ?? (raw as any).conversation?.name ?? (raw as any).title ?? null;
+
       if (createdId) {
-        const title = (raw as any).conversation?.title || (raw as any).title || null;
         this.ensureConversation(createdId, title ?? undefined);
         this.serverCreatedConversations.add(createdId);
         if (!this.activeConversationId) {
           this.activeConversationId = createdId;
         }
+
+        let resolved = false;
+        if (requestId) {
+          const entry = this.pendingConversationCreations.get(requestId);
+          if (entry) {
+            this.pendingConversationCreations.delete(requestId);
+            const idx = this.pendingConversationCreationQueue.findIndex((e) => e.requestId === requestId);
+            if (idx >= 0) this.pendingConversationCreationQueue.splice(idx, 1);
+            entry.resolve(createdId);
+            resolved = true;
+          }
+        }
+        if (!resolved && this.pendingConversationCreationQueue.length > 0) {
+          const entry = this.pendingConversationCreationQueue.shift()!;
+          this.pendingConversationCreations.delete(entry.requestId);
+          entry.resolve(createdId);
+        }
+
         this.emit('conversationCreated', { conversationId: createdId, title: title ?? null });
         this.notify();
       }

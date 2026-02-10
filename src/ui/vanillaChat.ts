@@ -4,6 +4,7 @@ import type {
   DoctorProfileArtifact,
   ProviderResult,
   ProviderSearchResultsArtifact,
+  SdkAuthType,
   SunnyAgentMessage,
   SunnyAgentMessageItem,
   SunnyAgentsClientSnapshot,
@@ -55,6 +56,14 @@ export interface VanillaChatOptions {
 export interface VanillaChatInstance {
   client: SunnyAgentsClient;
   destroy: () => void;
+  /**
+   * Switch auth type at runtime. Uses cached server config from sdk.session.created.
+   * Only available when the instance was created via createSunnyChat().
+   */
+  setAuthType?: (
+    authType: SdkAuthType,
+    options?: { idTokenProvider?: () => Promise<string | null> },
+  ) => Promise<void>;
 }
 
 const STYLE_ID = 'sunny-agents-vanilla-style';
@@ -1112,21 +1121,13 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     list.appendChild(item);
   };
 
-  const ensureConversation = async () => {
-    const snap = latestSnapshot ?? client.getSnapshot();
-    if (snap.conversations.length === 0) {
-      const newId = await client.createConversation(headerTitle);
-      client.setActiveConversation(newId);
-    }
-  };
-
   const send = async () => {
     const text = modalInput.value.trim();
     if (!text) return;
     setExpanded(true);
     try {
-      await ensureConversation();
-      await client.sendMessage(text, { conversationId: persistedConversationId });
+      const { conversationId } = await client.sendMessage(text, { conversationId: persistedConversationId });
+      persistedConversationId = conversationId;
       modalInput.value = '';
       render();
     } catch (error) {
@@ -1156,10 +1157,9 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     modalInput.value = text;
     triggerInput.value = '';
     setExpanded(true);
-    // Now send the message
     try {
-      await ensureConversation();
-      await client.sendMessage(text, { conversationId: persistedConversationId });
+      const { conversationId } = await client.sendMessage(text, { conversationId: persistedConversationId });
+      persistedConversationId = conversationId;
       modalInput.value = '';
       render();
     } catch (error) {
@@ -1167,7 +1167,6 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       console.error('[VanillaChat] Error sending message:', errorMessage);
       // Restore the text to the input so user can retry
       modalInput.value = text;
-      // Show error to user (you might want to add a toast/alert here)
       alert(`Failed to connect: ${errorMessage}\n\nMake sure the WebSocket server is running at the configured URL.`);
     }
   };

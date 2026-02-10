@@ -24,6 +24,21 @@
         </div>
 
         <div id="passwordless-auth" class="auth-content active">
+          <div class="sdk-config">
+            <h3>SDK Configuration</h3>
+            <pre><code>import { createSunnyChat } from '@sunnyhealthai/agents-sdk';
+
+const chat = await createSunnyChat({
+  container: document.getElementById('chat'),
+  partnerIdentifier: 'guardian-mock',
+  publicKey: 'YOUR_PUBLIC_KEY',
+  authType: 'passwordless',
+});
+
+// Clean up when unmounting
+// chat.destroy();</code></pre>
+          </div>
+
           <form id="passwordless-form">
             <div class="form-group">
               <label for="email-input">Email</label>
@@ -53,15 +68,35 @@
         </div>
 
         <div id="manual-auth" class="auth-content">
+          <div class="sdk-config">
+            <h3>SDK Configuration</h3>
+            <pre><code>import { createSunnyChat } from '@sunnyhealthai/agents-sdk';
+
+const chat = await createSunnyChat({
+  container: document.getElementById('chat'),
+  partnerIdentifier: 'guardian-mock',
+  publicKey: 'YOUR_PUBLIC_KEY', // from API Keys section below
+  authType: 'tokenExchange',
+  idTokenProvider: async () => {
+    // Return your user's current ID token
+    return localStorage.getItem('id_token');
+  },
+});
+
+// Clean up when unmounting
+// chat.destroy();</code></pre>
+          </div>
+
           <form id="token-form">
             <label for="token-input">ID Token</label>
-            <input id="token-input" name="token" type="password" placeholder="sk-live-..." autocomplete="off" />
+            <input id="token-input" name="token" type="password" placeholder="Paste your ID token here..." autocomplete="off" />
             <div class="token-actions">
               <button type="submit">Save token</button>
               <button type="button" id="clear-token">Clear token</button>
             </div>
             <small>
-              Tokens are stored in memory only (no persistence). The token will be lost on page reload.
+              Paste an ID token from your identity provider. The SDK will exchange it for an access token automatically.
+              Tokens are stored in memory only and will be lost on page reload.
             </small>
           </form>
         </div>

@@ -163,6 +163,42 @@ h2 {
   min-height: 80px;
 }
 
+.sdk-config {
+  margin-bottom: 1rem;
+  background: #f8f9fc;
+  border: 1px solid rgba(12, 27, 51, 0.1);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.sdk-config h3 {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(12, 27, 51, 0.5);
+}
+
+.sdk-config pre {
+  margin: 0;
+  overflow-x: auto;
+  border-radius: 6px;
+  background: #1e293b;
+  padding: 1rem;
+}
+
+.sdk-config pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  color: #e2e8f0;
+  font-family: 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'Courier New', monospace;
+  white-space: pre;
+}
+
 .status-message {
   padding: 0.75rem;
   border-radius: 8px;

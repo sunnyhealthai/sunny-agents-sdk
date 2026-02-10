@@ -1,13 +1,15 @@
 export * from './types';
 export { SunnyAgentsClient } from './client/SunnyAgentsClient';
 export { attachSunnyChat, type VanillaChatOptions, type VanillaChatInstance, type VanillaChatColors } from './ui/vanillaChat';
-export { PasswordlessAuthManager, type PasswordlessAuthConfig, type PasswordlessStartOptions, type PasswordlessVerifyOptions } from './client/passwordlessAuth';
-export { Auth0Provider, type Auth0ProviderConfig, type PopupOptions } from './client/auth0Provider';
 
 // Unified entry point - recommended API
 export { createSunnyChat } from './createSunnyChat';
 
 // Internal APIs - exported for advanced use cases but not recommended for most users
+/** @internal */
+export { Auth0Provider, type Auth0ProviderConfig, type PopupOptions } from './client/auth0Provider';
+/** @internal */
+export { PasswordlessAuthManager, type PasswordlessAuthConfig, type PasswordlessStartOptions, type PasswordlessVerifyOptions } from './client/passwordlessAuth';
 /** @internal */
 export { LLMWebSocketManager } from './client/llmWebSocket';
 /** @internal */
