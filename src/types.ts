@@ -267,5 +267,7 @@ export interface UnifiedSunnyChatOptions {
   placeholder?: string;
   /** Theme colors. */
   colors?: VanillaChatColors;
+  /** Welcome message shown when the conversation has no messages. */
+  startMessage?: string;
 }
 

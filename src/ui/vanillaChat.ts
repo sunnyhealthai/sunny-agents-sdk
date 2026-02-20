@@ -47,6 +47,10 @@ export interface VanillaChatOptions {
    */
   colors?: VanillaChatColors;
   /**
+   * Welcome message shown when the conversation has no messages.
+   */
+  startMessage?: string;
+  /**
    * Optional PasswordlessAuthManager instance for handling verification flow in chat messages.
    * When provided, verification flow tags in messages will render a passwordless login form.
    */
@@ -106,6 +110,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     anonymous = false,
     conversationId: providedConversationId,
     colors = {},
+    startMessage,
     passwordlessAuth,
   } = options;
 
@@ -229,16 +234,28 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     // Filter out hidden messages from display
     const visibleMessages = convo.messages.filter((msg) => !msg.text?.includes('{hidden_message}'));
     const approvalStatuses = buildApprovalStatuses(convo.messages);
-    for (const msg of visibleMessages) {
+
+    if (visibleMessages.length === 0 && startMessage) {
       const row = document.createElement('div');
-      row.className = `sunny-chat__message sunny-chat__message--${msg.role}`;
-      const bubble = buildMessageBubble(msg, convo.id, approvalStatuses);
+      row.className = 'sunny-chat__message sunny-chat__message--assistant';
+      const bubble = document.createElement('div');
+      bubble.className = 'sunny-chat__bubble';
+      const paragraph = createParagraph(startMessage, true);
+      if (paragraph) bubble.appendChild(paragraph);
       row.appendChild(bubble);
       messagesEl.appendChild(row);
+    } else {
+      for (const msg of visibleMessages) {
+        const row = document.createElement('div');
+        row.className = `sunny-chat__message sunny-chat__message--${msg.role}`;
+        const bubble = buildMessageBubble(msg, convo.id, approvalStatuses);
+        row.appendChild(bubble);
+        messagesEl.appendChild(row);
+      }
     }
 
     messagesEl.scrollTop = messagesEl.scrollHeight;
-    setExpanded(convo.messages.length > 0);
+    setExpanded(convo.messages.length > 0 || !!startMessage);
   };
 
   const buildMessageBubble = (message: SunnyAgentMessage, conversationId: string, approvals: Map<string, ApprovalState>) => {
@@ -1294,6 +1311,14 @@ function ensureStyles() {
     --sunny-color-primary-active: color-mix(in srgb, var(--sunny-color-primary) 80%, black);
     --sunny-color-primary-shadow: color-mix(in srgb, var(--sunny-color-primary) 30%, transparent);
     --sunny-color-primary-ring: color-mix(in srgb, var(--sunny-color-primary) 12%, transparent);
+    /* Provider card tints - derived from primary */
+    --sunny-color-primary-card-bg: color-mix(in srgb, var(--sunny-color-primary) 5%, white);
+    --sunny-color-primary-card-bg-alt: color-mix(in srgb, var(--sunny-color-primary) 8%, white);
+    --sunny-color-primary-border: color-mix(in srgb, var(--sunny-color-primary) 20%, transparent);
+    --sunny-color-primary-border-hover: color-mix(in srgb, var(--sunny-color-primary) 30%, transparent);
+    --sunny-color-primary-fill-10: color-mix(in srgb, var(--sunny-color-primary) 10%, white);
+    --sunny-color-primary-fill-20: color-mix(in srgb, var(--sunny-color-primary) 20%, white);
+    --sunny-color-primary-muted: color-mix(in srgb, var(--sunny-color-primary) 60%, white);
     --sunny-color-accent-hover: color-mix(in srgb, var(--sunny-color-accent) 85%, black);
     --sunny-color-accent-shadow: color-mix(in srgb, var(--sunny-color-accent) 25%, transparent);
     --sunny-color-accent-bg: color-mix(in srgb, var(--sunny-color-accent) 8%, white);
@@ -1569,16 +1594,16 @@ function ensureStyles() {
   /* Provider Card */
   .sunny-provider-card {
     margin: 12px 0;
-    border: 1px solid rgba(14, 165, 233, 0.2);
+    border: 1px solid var(--sunny-color-primary-border);
     border-radius: 12px;
     padding: 16px;
-    background: linear-gradient(to bottom right, rgba(240, 249, 255, 1), rgba(239, 246, 255, 1));
+    background: linear-gradient(to bottom right, var(--sunny-color-primary-card-bg), var(--sunny-color-primary-card-bg-alt));
     box-shadow: var(--sunny-shadow-sm);
     transition: box-shadow var(--sunny-transition-normal), border-color var(--sunny-transition-normal);
   }
   .sunny-provider-card:hover {
     box-shadow: var(--sunny-shadow-md);
-    border-color: rgba(14, 165, 233, 0.3);
+    border-color: var(--sunny-color-primary-border-hover);
   }
   .sunny-provider-card--loading {
     opacity: 1;
@@ -1596,12 +1621,12 @@ function ensureStyles() {
     width: 48px;
     height: 48px;
     border-radius: 50%;
-    background: rgba(14, 165, 233, 0.1);
+    background: var(--sunny-color-primary-fill-10);
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    color: rgba(14, 165, 233, 0.6);
+    color: var(--sunny-color-primary-muted);
     font-size: 20px;
     font-weight: 600;
   }
@@ -1662,11 +1687,11 @@ function ensureStyles() {
   .sunny-provider-card__language-tag {
     display: inline-block;
     padding: 2px 8px;
-    background: rgba(14, 165, 233, 0.1);
-    border: 1px solid rgba(14, 165, 233, 0.2);
+    background: var(--sunny-color-primary-fill-10);
+    border: 1px solid var(--sunny-color-primary-border);
     border-radius: 4px;
     font-size: 12px;
-    color: rgba(14, 165, 233, 0.8);
+    color: var(--sunny-color-primary);
     font-weight: 500;
   }
   .sunny-provider-card__loading {
@@ -1678,7 +1703,7 @@ function ensureStyles() {
     width: 48px;
     height: 48px;
     border-radius: 50%;
-    background: rgba(14, 165, 233, 0.2);
+    background: var(--sunny-color-primary-fill-20);
     flex-shrink: 0;
     animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
@@ -1690,7 +1715,7 @@ function ensureStyles() {
   }
   .sunny-provider-card__loading-line {
     height: 16px;
-    background: rgba(14, 165, 233, 0.2);
+    background: var(--sunny-color-primary-fill-20);
     border-radius: 4px;
     animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
@@ -1705,7 +1730,7 @@ function ensureStyles() {
   }
   .sunny-provider-card__loading-text {
     font-size: 12px;
-    color: rgba(14, 165, 233, 0.6);
+    color: var(--sunny-color-primary-muted);
     text-align: center;
     margin-top: 8px;
     opacity: 0.75;
@@ -1741,15 +1766,15 @@ function ensureStyles() {
   /* Provider Search Results - Individual Cards */
   .sunny-provider-search-results__provider {
     margin: 12px 0;
-    border: 1px solid rgba(14, 165, 233, 0.2);
+    border: 1px solid var(--sunny-color-primary-border);
     border-radius: 12px;
     padding: 16px;
-    background: linear-gradient(to bottom right, rgba(240, 249, 255, 1), rgba(239, 246, 255, 1));
+    background: linear-gradient(to bottom right, var(--sunny-color-primary-card-bg), var(--sunny-color-primary-card-bg-alt));
     box-shadow: var(--sunny-shadow-sm);
     transition: border-color var(--sunny-transition-fast), box-shadow var(--sunny-transition-fast);
   }
   .sunny-provider-search-results__provider:hover {
-    border-color: rgba(14, 165, 233, 0.3);
+    border-color: var(--sunny-color-primary-border-hover);
     box-shadow: var(--sunny-shadow-md);
   }
   .sunny-provider-search-results__provider-content {
@@ -1768,12 +1793,12 @@ function ensureStyles() {
     width: 48px;
     height: 48px;
     border-radius: 50%;
-    background: rgba(14, 165, 233, 0.1);
-    border: 2px solid rgba(14, 165, 233, 0.2);
+    background: var(--sunny-color-primary-fill-10);
+    border: 2px solid var(--sunny-color-primary-border);
     display: flex;
     align-items: center;
     justify-content: center;
-    color: rgba(14, 165, 233, 0.6);
+    color: var(--sunny-color-primary-muted);
     font-size: 20px;
     font-weight: 600;
     flex-shrink: 0;
@@ -1816,18 +1841,18 @@ function ensureStyles() {
   }
   .sunny-provider-search-results__provider-location-name {
     font-size: 14px;
-    color: rgba(14, 165, 233, 0.7);
+    color: var(--sunny-color-primary-muted);
     font-weight: 400;
     line-height: 1.4;
   }
   .sunny-provider-search-results__provider-location-name::before {
     content: '•';
     margin-right: 8px;
-    color: rgba(14, 165, 233, 0.5);
+    color: var(--sunny-color-primary-muted);
   }
   .sunny-provider-search-results__provider-specialty {
     font-size: 12px;
-    color: rgba(14, 165, 233, 0.8);
+    color: var(--sunny-color-primary);
     font-weight: 500;
     line-height: 1.4;
   }

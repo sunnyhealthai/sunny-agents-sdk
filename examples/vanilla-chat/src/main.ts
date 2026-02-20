@@ -1,9 +1,12 @@
 import { createSunnyChat, type SdkAuthType } from '@sunnyhealthai/agents-sdk';
 import './style.css';
 
-const chatContainer = document.getElementById('sunny-chat');
-if (!chatContainer) {
-  throw new Error('Missing #sunny-chat container');
+type ChatVariant = 'default' | 'customized';
+
+const defaultContainer = document.getElementById('sunny-chat-default');
+const customizedContainer = document.getElementById('sunny-chat-customized');
+if (!defaultContainer || !customizedContainer) {
+  throw new Error('Missing chat containers (#sunny-chat-default, #sunny-chat-customized)');
 }
 
 // --- Configuration from environment variables ---
@@ -25,39 +28,104 @@ const getIdTokenProvider = () => {
   return async () => null;
 };
 
-let chat: Awaited<ReturnType<typeof createSunnyChat>>;
+type ChatInstance = Awaited<ReturnType<typeof createSunnyChat>>;
+let chatDefault: ChatInstance | null = null;
+let chatCustomized: ChatInstance | null = null;
+let activeVariant: ChatVariant = 'default';
 
-async function initializeChat() {
-  if (chat) {
-    chat.destroy();
+function getActiveChat(): ChatInstance | null {
+  return activeVariant === 'default' ? chatDefault : chatCustomized;
+}
+
+async function initializeChat(variant: ChatVariant): Promise<ChatInstance> {
+  const isDefault = variant === 'default';
+  const chatRef = isDefault ? chatDefault : chatCustomized;
+  const container = isDefault ? defaultContainer! : customizedContainer!;
+
+  if (chatRef) {
+    chatRef.destroy();
   }
 
   if (!publicKey) {
     console.warn('[VanillaChat] VITE_SUNNY_PUBLIC_KEY not set. Set it in your .env file.');
   }
 
-  chat = await createSunnyChat({
-    container: chatContainer!,
+  const baseOptions = {
+    container,
     partnerIdentifier,
     publicKey,
     authType,
     websocketUrl,
     devRoute,
-    headerTitle: 'Sunny Chat',
-    placeholder: 'Ask about your benefits…',
-    colors: {
-      primary: '#048db4',
-      secondary: '#0c3c5c',
-      accent: '#168c55',
-    },
     ...(authType === 'tokenExchange' ? { idTokenProvider: getIdTokenProvider() } : {}),
-  });
+  };
+
+  const chat = await createSunnyChat(
+    isDefault
+      ? {
+          ...baseOptions,
+          headerTitle: 'Sunny Chat',
+          placeholder: 'Ask about your benefits…',
+          colors: {
+            primary: '#048db4',
+            secondary: '#0c3c5c',
+            accent: '#168c55',
+          },
+        }
+      : {
+          ...baseOptions,
+          headerTitle: 'Sunny Chat',
+          placeholder: 'How can I help today?',
+          colors: {
+            primary: '#7c3aed',
+            secondary: '#4c1d95',
+            accent: '#f59e0b',
+          },
+          startMessage:
+            "Hi! I'm your benefits assistant. Ask me about coverage, claims, or finding a doctor.",
+        },
+  );
+
+  if (isDefault) {
+    chatDefault = chat;
+  } else {
+    chatCustomized = chat;
+  }
+  return chat;
 }
 
-// Initial chat setup
-initializeChat();
+// Initial chat setup (default variant)
+initializeChat('default');
 
-// Tab switching
+// Chat variant tab switching
+const chatVariantTabs = document.querySelectorAll('.chat-variant-tab');
+const chatVariantContents = document.querySelectorAll('.chat-variant-content');
+
+chatVariantTabs.forEach((tab) => {
+  tab.addEventListener('click', async () => {
+    const variant = tab.getAttribute('data-variant') as ChatVariant;
+    if (!variant || (variant !== 'default' && variant !== 'customized')) return;
+
+    chatVariantTabs.forEach((t) => t.classList.remove('active'));
+    chatVariantContents.forEach((c) => c.classList.remove('active'));
+    tab.classList.add('active');
+    const targetContent = document.getElementById(
+      variant === 'default' ? 'default-chat' : 'customized-chat',
+    );
+    if (targetContent) {
+      targetContent.classList.add('active');
+    }
+
+    activeVariant = variant;
+
+    // Lazy-init customized chat when first selected
+    if (variant === 'customized' && !chatCustomized) {
+      await initializeChat('customized');
+    }
+  });
+});
+
+// Auth tab switching
 const authTabs = document.querySelectorAll('.auth-tab');
 const authContents = document.querySelectorAll('.auth-content');
 
@@ -72,7 +140,8 @@ authTabs.forEach((tab) => {
       targetContent.classList.add('active');
     }
 
-    // Switch SDK auth type based on the selected tab
+    // Switch SDK auth type on the active chat
+    const chat = getActiveChat();
     if (chat?.setAuthType) {
       try {
         if (targetTab === 'manual') {
@@ -140,6 +209,7 @@ passwordlessForm?.addEventListener('submit', async (event) => {
   hideStatus();
 
   // Switch to passwordless auth type if not already
+  const chat = getActiveChat();
   if (chat?.setAuthType && authType !== 'passwordless') {
     try {
       await chat.setAuthType('passwordless');
@@ -191,13 +261,14 @@ passwordlessLogout?.addEventListener('click', async () => {
   currentPhone = null;
   updateAuthUI();
   hideStatus();
-  await initializeChat();
+  await initializeChat(activeVariant);
 });
 
 // Auth type switching buttons (if they exist in the HTML)
 document.querySelectorAll('[data-auth-type]').forEach((btn) => {
   btn.addEventListener('click', async () => {
     const newAuthType = btn.getAttribute('data-auth-type') as SdkAuthType;
+    const chat = getActiveChat();
     if (chat?.setAuthType) {
       try {
         await chat.setAuthType(newAuthType);
@@ -228,6 +299,7 @@ tokenForm?.addEventListener('submit', async (event) => {
   console.log('[VanillaChat] ID token saved to memory');
 
   // Switch to tokenExchange auth type with the new token
+  const chat = getActiveChat();
   if (chat?.setAuthType) {
     try {
       await chat.setAuthType('tokenExchange', {
@@ -244,7 +316,8 @@ clearTokenBtn?.addEventListener('click', async () => {
   inMemoryIdToken = null;
   if (tokenInput) tokenInput.value = '';
 
-  // Switch back to passwordless
+  // Switch back to passwordless on the active chat
+  const chat = getActiveChat();
   if (chat?.setAuthType) {
     try {
       await chat.setAuthType('passwordless');
@@ -256,5 +329,6 @@ clearTokenBtn?.addEventListener('click', async () => {
 });
 
 window.addEventListener('beforeunload', () => {
-  chat?.destroy();
+  chatDefault?.destroy();
+  chatCustomized?.destroy();
 });

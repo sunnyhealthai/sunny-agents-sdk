@@ -103,7 +103,17 @@ const chat = await createSunnyChat({
       </section>
 
       <section class="chat-panel">
-        <div id="sunny-chat" aria-live="polite"></div>
+        <h2>Chat Variants</h2>
+        <div class="chat-variant-tabs">
+          <button class="chat-variant-tab active" data-variant="default">Default</button>
+          <button class="chat-variant-tab" data-variant="customized">Customized</button>
+        </div>
+        <div id="default-chat" class="chat-variant-content active">
+          <div id="sunny-chat-default" aria-live="polite"></div>
+        </div>
+        <div id="customized-chat" class="chat-variant-content">
+          <div id="sunny-chat-customized" aria-live="polite"></div>
+        </div>
       </section>
     </main>
 

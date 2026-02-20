@@ -82,7 +82,47 @@ header p {
   /* No background - the trigger input has its own styling */
 }
 
-#sunny-chat {
+.chat-panel h2 {
+  margin-bottom: 0.75rem;
+}
+
+.chat-variant-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid rgba(12, 27, 51, 0.1);
+}
+
+.chat-variant-tab {
+  padding: 0.5rem 1rem;
+  border: none;
+  background: transparent;
+  color: rgba(12, 27, 51, 0.6);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  font-size: 0.95rem;
+  transition: all 0.2s;
+}
+
+.chat-variant-tab:hover {
+  color: #0c1b33;
+}
+
+.chat-variant-tab.active {
+  color: #0c1b33;
+  border-bottom-color: #048db4;
+}
+
+.chat-variant-content {
+  display: none;
+}
+
+.chat-variant-content.active {
+  display: block;
+}
+
+#sunny-chat-default,
+#sunny-chat-customized {
   /* Container for the chat trigger */
 }
 
