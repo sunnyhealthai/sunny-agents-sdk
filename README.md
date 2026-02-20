@@ -16,11 +16,17 @@ yarn add @sunnyhealthai/agents-sdk
 
 ### Simplified API (Recommended)
 
-The easiest way to get started is with `createSunnyChat()`, which automatically handles authentication and initialization. You need three required parameters: `partnerIdentifier`, `publicKey`, and `authType`. All auth configuration details (Auth0 domain, client ID, etc.) are fetched from the server automatically.
+The easiest way to get started is with `createSunnyChat()`, which automatically handles authentication and initialization. You need three required parameters: `partnerIdentifier`, `publicKey`, and `authType`. All auth configuration details (Auth0 domain, client ID, token exchange config, etc.) are fetched from the server automatically.
 
-#### Passwordless (Anonymous with Verification)
+**Path of least resistance:** Use `createSunnyChat` as your entry point and pick an auth type by simplicity:
 
-Starts as anonymous chat. Users can verify via email/SMS when prompted:
+1. **passwordless** — No external auth needed. User starts anonymous and verifies via email/SMS when prompted in the chat.
+2. **tokenExchange** — You already have Auth0, Firebase, or similar. Provide `idTokenProvider` only; the server supplies audience, clientId, organization, etc.
+3. **saml** / **oidc** — Enterprise SSO. Auth0 popup triggers automatically.
+
+#### Passwordless
+
+Starts as anonymous chat. Users can verify via email/SMS when prompted. Customize with `headerTitle`, `placeholder`, and `colors`:
 
 ```ts
 import { createSunnyChat } from "@sunnyhealthai/agents-sdk";
@@ -32,30 +38,16 @@ const chat = await createSunnyChat({
   authType: "passwordless",
   headerTitle: "Sunny Agents",
   placeholder: "Ask anything…",
+  colors: { primary: "#006fff", secondary: "#212124", accent: "#22c55e" },
 });
 
 // Clean up when unmounting
 // chat.destroy();
 ```
 
-#### SAML/OIDC Authentication (Auto-Login)
-
-For SAML or OIDC authentication via Auth0. Authentication popup triggers automatically:
-
-```ts
-const chat = await createSunnyChat({
-  container: document.getElementById("chat"),
-  partnerIdentifier: "your-partner-name",
-  publicKey: "pk-sunnyagents_abc_xyz",
-  authType: "saml", // or 'oidc' for OIDC connections
-});
-```
-
-**Note:** When using SAML/OIDC authentication, Auth0 handles token exchange via standard OAuth flow. Auth configuration (domain, client ID, connection name) comes from the server based on your `publicKey`.
-
 #### Custom Token Exchange
 
-For custom JWT token exchange flows:
+For partners with existing auth (Auth0, Firebase, etc.). You provide `idTokenProvider` only; the server supplies audience, clientId, organization, and tokenExchangeUrl based on your `publicKey`:
 
 ```ts
 const chat = await createSunnyChat({
@@ -67,11 +59,26 @@ const chat = await createSunnyChat({
 });
 ```
 
-**Note:** `idTokenProvider` is required when `authType` is `'tokenExchange'`. Token exchange configuration (audience, client ID, organization, etc.) comes from the server.
+**Note:** `idTokenProvider` is required when `authType` is `'tokenExchange'`. All token exchange configuration comes from the server — you do not pass `tokenExchange` when using `createSunnyChat`.
+
+#### SAML/OIDC (Enterprise SSO)
+
+For SAML or OIDC via Auth0. Authentication popup triggers automatically. Auth configuration (domain, client ID, connection name) comes from the server:
+
+```ts
+const chat = await createSunnyChat({
+  container: document.getElementById("chat"),
+  partnerIdentifier: "your-partner-name",
+  publicKey: "pk-sunnyagents_abc_xyz",
+  authType: "saml", // or 'oidc' for OIDC connections
+});
+```
+
+**Note:** Auth0 handles token exchange via standard OAuth flow.
 
 #### Switching Auth Type at Runtime
 
-The returned instance includes a `setAuthType()` method for switching authentication at runtime:
+The returned instance includes `setAuthType()` for switching authentication at runtime:
 
 ```ts
 const chat = await createSunnyChat({
@@ -81,7 +88,7 @@ const chat = await createSunnyChat({
   authType: "passwordless",
 });
 
-// Later, switch to SAML authentication
+// Later, switch to SAML
 await chat.setAuthType("saml");
 
 // Or switch to token exchange with a provider
@@ -90,9 +97,9 @@ await chat.setAuthType("tokenExchange", {
 });
 ```
 
-### Drop-in Chat Widget (Low-Level)
+### Drop-in Chat Widget (Advanced)
 
-For more control, use `attachSunnyChat()` directly with a `SunnyAgentsConfig`. This bypasses the server-driven configuration of `createSunnyChat()` and requires you to provide all auth config manually:
+For advanced use when you need to bypass server-driven config and provide `tokenExchange` or `idTokenProvider` manually, use `attachSunnyChat()` with a `SunnyAgentsConfig`:
 
 ```html
 <div id="sunny-chat" style="height: 520px;"></div>
@@ -122,7 +129,7 @@ For more control, use `attachSunnyChat()` directly with a `SunnyAgentsConfig`. T
 
 ### Headless Client
 
-For custom UI implementations, use the headless client:
+For full custom UIs when you do not want the built-in chat widget, use the headless client:
 
 ```ts
 import { SunnyAgentsClient } from "@sunnyhealthai/agents-sdk";
@@ -198,22 +205,11 @@ For anonymous mode (when `tokenExchange` is not used), you can pass `partnerName
 
 ### Anonymous Mode
 
-#### With `createSunnyChat` (Recommended)
-
-For anonymous/passwordless chat, use `authType: 'passwordless'`. The user starts unauthenticated and can verify via email/SMS when prompted:
-
-```ts
-const chat = await createSunnyChat({
-  container: document.getElementById("chat"),
-  partnerIdentifier: "your-partner-name",
-  publicKey: "pk-sunnyagents_abc_xyz",
-  authType: "passwordless",
-});
-```
+The recommended path is `createSunnyChat` with `authType: 'passwordless'` (see [Quick Start](#quick-start)). The user starts unauthenticated and can verify via email/SMS when prompted.
 
 #### With `SunnyAgentsClient` (Low-Level)
 
-For anonymous/local-only conversations, omit the `idTokenProvider` and `tokenExchange` configuration. The SDK will automatically operate in anonymous mode:
+For anonymous/local-only conversations without the built-in widget, omit `idTokenProvider` and `tokenExchange`. The SDK will operate in anonymous mode:
 
 ```ts
 const client = new SunnyAgentsClient({
@@ -246,9 +242,9 @@ attachSunnyChat({
 });
 ```
 
-**Note:** `partnerName` can be passed in anonymous mode to identify the partner to the backend. It is sent as the `partner_identifier` query parameter on the websocket connection.
+**Note:** Prefer `createSunnyChat` with `authType: 'passwordless'` when you want anonymous chat with optional in-chat verification. The low-level options above are for custom UIs or when bypassing server-driven config.
 
-**Note:** `createServerConversations` defaults to `true` if both `idTokenProvider` and `tokenExchange` are provided, otherwise `false`. The `anonymous` option in `attachSunnyChat` sets `createServerConversations: false` when no token provider is configured.
+**Note:** `partnerName` can be passed in anonymous mode to identify the partner to the backend. It is sent as the `partner_identifier` query parameter on the websocket connection. `createServerConversations` defaults to `true` if both `idTokenProvider` and `tokenExchange` are provided, otherwise `false`.
 
 ### Auth0 Enterprise Connection (SAML/OIDC)
 
@@ -352,7 +348,7 @@ See the [Auth0 SAML example](examples/auth0-saml-chat/) for a complete implement
 
 ### Passwordless Authentication
 
-For passwordless authentication via email or SMS. Users start as anonymous and can verify via OTP when prompted.
+The path of least resistance for passwordless is `createSunnyChat` with `authType: 'passwordless'` (see [Quick Start](#quick-start)). Users start anonymous and verify via email/SMS when prompted.
 
 **Benefits:**
 - No page redirects - all authentication happens via WebSocket
@@ -505,10 +501,10 @@ createSunnyChat(options: UnifiedSunnyChatOptions): Promise<VanillaChatInstance>
 
 **Important Notes:**
 
-- All auth configuration (Auth0 domain, client ID, connection, audience, etc.) comes from the server -- you do not provide them
+- All auth configuration (Auth0 domain, client ID, connection, audience, etc.) comes from the server — you do not provide them
 - `authType: 'passwordless'` starts anonymous with in-chat verification UI
+- `authType: 'tokenExchange'` — you provide `idTokenProvider` only; server provides audience, clientId, organization, tokenExchangeUrl (based on `publicKey`)
 - `authType: 'saml'` or `'oidc'` triggers automatic Auth0 popup authentication
-- `authType: 'tokenExchange'` requires `idTokenProvider` and uses server-provided exchange config
 - Use `setAuthType()` on the returned instance to switch auth types at runtime
 
 ### SunnyAgentsClient

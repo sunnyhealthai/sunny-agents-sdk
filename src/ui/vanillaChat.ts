@@ -47,10 +47,6 @@ export interface VanillaChatOptions {
    */
   colors?: VanillaChatColors;
   /**
-   * Welcome message shown when the conversation has no messages.
-   */
-  startMessage?: string;
-  /**
    * Optional PasswordlessAuthManager instance for handling verification flow in chat messages.
    * When provided, verification flow tags in messages will render a passwordless login form.
    */
@@ -110,7 +106,6 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     anonymous = false,
     conversationId: providedConversationId,
     colors = {},
-    startMessage,
     passwordlessAuth,
   } = options;
 
@@ -235,27 +230,16 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     const visibleMessages = convo.messages.filter((msg) => !msg.text?.includes('{hidden_message}'));
     const approvalStatuses = buildApprovalStatuses(convo.messages);
 
-    if (visibleMessages.length === 0 && startMessage) {
+    for (const msg of visibleMessages) {
       const row = document.createElement('div');
-      row.className = 'sunny-chat__message sunny-chat__message--assistant';
-      const bubble = document.createElement('div');
-      bubble.className = 'sunny-chat__bubble';
-      const paragraph = createParagraph(startMessage, true);
-      if (paragraph) bubble.appendChild(paragraph);
+      row.className = `sunny-chat__message sunny-chat__message--${msg.role}`;
+      const bubble = buildMessageBubble(msg, convo.id, approvalStatuses);
       row.appendChild(bubble);
       messagesEl.appendChild(row);
-    } else {
-      for (const msg of visibleMessages) {
-        const row = document.createElement('div');
-        row.className = `sunny-chat__message sunny-chat__message--${msg.role}`;
-        const bubble = buildMessageBubble(msg, convo.id, approvalStatuses);
-        row.appendChild(bubble);
-        messagesEl.appendChild(row);
-      }
     }
 
     messagesEl.scrollTop = messagesEl.scrollHeight;
-    setExpanded(convo.messages.length > 0 || !!startMessage);
+    setExpanded(convo.messages.length > 0);
   };
 
   const buildMessageBubble = (message: SunnyAgentMessage, conversationId: string, approvals: Map<string, ApprovalState>) => {

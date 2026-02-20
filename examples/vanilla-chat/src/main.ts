@@ -81,8 +81,6 @@ async function initializeChat(variant: ChatVariant): Promise<ChatInstance> {
             secondary: '#4c1d95',
             accent: '#f59e0b',
           },
-          startMessage:
-            "Hi! I'm your benefits assistant. Ask me about coverage, claims, or finding a doctor.",
         },
   );
 
