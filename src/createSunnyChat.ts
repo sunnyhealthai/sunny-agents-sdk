@@ -217,6 +217,9 @@ export async function createSunnyChat(options: UnifiedSunnyChatOptions): Promise
     headerTitle: options.headerTitle,
     placeholder: options.placeholder,
     colors: options.colors,
+    fontSize: options.fontSize,
+    fontFamily: options.fontFamily,
+    dimensions: options.dimensions,
     anonymous: options.authType === 'passwordless',
     passwordlessAuth,
   });

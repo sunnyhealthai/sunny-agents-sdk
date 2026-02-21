@@ -9,6 +9,7 @@ import type {
   SunnyAgentMessageItem,
   SunnyAgentsClientSnapshot,
   SunnyAgentsConfig,
+  VanillaChatDimensions,
 } from '../types';
 
 /**
@@ -21,7 +22,13 @@ export interface VanillaChatColors {
   secondary?: string;
   /** Accent color used for success states and highlights. Default: #22c55e */
   accent?: string;
+  /** Background color for modal and content areas. Default: #fff */
+  background?: string;
+  /** Main text color. Default: #212124 */
+  text?: string;
 }
+
+export type { VanillaChatDimensions };
 
 export interface VanillaChatOptions {
   container: HTMLElement;
@@ -46,6 +53,18 @@ export interface VanillaChatOptions {
    * Uses CSS custom properties for easy styling.
    */
   colors?: VanillaChatColors;
+  /**
+   * Base font size for chat content (e.g. "14px", "1rem"). Default: 14px
+   */
+  fontSize?: string;
+  /**
+   * Font family for the chat UI (e.g. "'Inter', sans-serif"). Default: Lato
+   */
+  fontFamily?: string;
+  /**
+   * Widget dimensions (modal width/height, trigger max-width).
+   */
+  dimensions?: VanillaChatDimensions;
   /**
    * Optional PasswordlessAuthManager instance for handling verification flow in chat messages.
    * When provided, verification flow tags in messages will render a passwordless login form.
@@ -106,6 +125,9 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     anonymous = false,
     conversationId: providedConversationId,
     colors = {},
+    fontSize,
+    fontFamily,
+    dimensions,
     passwordlessAuth,
   } = options;
 
@@ -126,10 +148,17 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   const root = document.createElement('div');
   root.className = 'sunny-chat sunny-chat--collapsed';
 
-  // Apply custom color properties
+  // Apply custom theme properties
   if (colors.primary) root.style.setProperty('--sunny-color-primary', colors.primary);
   if (colors.secondary) root.style.setProperty('--sunny-color-secondary', colors.secondary);
   if (colors.accent) root.style.setProperty('--sunny-color-accent', colors.accent);
+  if (colors.background) root.style.setProperty('--sunny-color-background', colors.background);
+  if (colors.text) root.style.setProperty('--sunny-color-text', colors.text);
+  if (fontSize) root.style.setProperty('--sunny-font-size-base', fontSize);
+  if (fontFamily) root.style.setProperty('--sunny-font-family', fontFamily);
+  if (dimensions?.width) root.style.setProperty('--sunny-modal-width', dimensions.width);
+  if (dimensions?.height) root.style.setProperty('--sunny-modal-height', dimensions.height);
+  if (dimensions?.triggerMaxWidth) root.style.setProperty('--sunny-trigger-max-width', dimensions.triggerMaxWidth);
   root.innerHTML = `
     <div class="sunny-chat-modal-backdrop" aria-hidden="true">
       <div class="sunny-chat-modal" role="dialog" aria-modal="true">
@@ -1278,8 +1307,19 @@ function ensureStyles() {
     --sunny-color-primary: #006fff;
     --sunny-color-secondary: #212124;
     --sunny-color-accent: #22c55e;
+    --sunny-color-background: var(--sunny-color-background);
+    --sunny-color-text: #212124;
     --sunny-color-danger: #ef4444;
     --sunny-color-danger-hover: #dc2626;
+    
+    /* Typography - can be overridden via options */
+    --sunny-font-size-base: 14px;
+    --sunny-font-family: 'Lato', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    
+    /* Dimensions - can be overridden via options */
+    --sunny-modal-width: 1390px;
+    --sunny-modal-height: 980px;
+    --sunny-trigger-max-width: 600px;
     
     /* Neutral palette */
     --sunny-gray-50: #fafbfc;
@@ -1317,8 +1357,9 @@ function ensureStyles() {
     --sunny-transition-fast: 120ms ease;
     --sunny-transition-normal: 200ms ease;
     
-    font-family: 'Lato', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    color: var(--sunny-color-secondary);
+    font-family: var(--sunny-font-family);
+    font-size: var(--sunny-font-size-base);
+    color: var(--sunny-color-text);
     line-height: 1.5;
   }
 
@@ -1345,11 +1386,11 @@ function ensureStyles() {
   /* Modal Container */
   .sunny-chat-modal {
     position: relative;
-    width: 1390px;
+    width: var(--sunny-modal-width);
     max-width: calc(100vw - 32px);
-    height: 980px;
+    height: var(--sunny-modal-height);
     max-height: calc(100vh - 64px);
-    background: #fff;
+    background: var(--sunny-color-background);
     border-radius: 12px;
     display: flex;
     flex-direction: column;
@@ -1401,7 +1442,7 @@ function ensureStyles() {
     display: flex;
     flex-direction: column;
     gap: 16px;
-    background: #fff;
+    background: var(--sunny-color-background);
   }
   .sunny-chat__messages::-webkit-scrollbar {
     width: 6px;
@@ -1423,7 +1464,7 @@ function ensureStyles() {
     padding: 14px 18px;
     border-radius: 14px;
     line-height: 1.55;
-    font-size: 14px;
+    font-size: 1em;
   }
   .sunny-chat__message--user {
     align-self: flex-end;
@@ -1434,8 +1475,8 @@ function ensureStyles() {
   }
   .sunny-chat__message--assistant {
     align-self: flex-start;
-    background: #fff;
-    color: var(--sunny-color-secondary);
+    background: var(--sunny-color-background);
+    color: var(--sunny-color-text);
     border: 1px solid var(--sunny-gray-200);
     border-radius: 14px 14px 14px 4px;
     box-shadow: var(--sunny-shadow-sm);
@@ -1476,9 +1517,9 @@ function ensureStyles() {
   .sunny-chat-modal__input,
   .sunny-chat__trigger-input {
     border: 1px solid var(--sunny-gray-300);
-    background: #fff;
-    color: var(--sunny-color-secondary);
-    font-size: 15px;
+    background: var(--sunny-color-background);
+    color: var(--sunny-color-text);
+    font-size: 1.071em;
     font-family: inherit;
     outline: none;
     transition: border-color var(--sunny-transition-fast), box-shadow var(--sunny-transition-fast);
@@ -1502,7 +1543,7 @@ function ensureStyles() {
     align-items: center;
     gap: 12px;
     padding: 16px 20px 20px;
-    background: #fff;
+    background: var(--sunny-color-background);
     border-top: 1px solid var(--sunny-gray-200);
   }
   .sunny-chat-modal__input {
@@ -1520,7 +1561,7 @@ function ensureStyles() {
     display: flex;
     align-items: center;
     position: relative;
-    max-width: 600px;
+    max-width: var(--sunny-trigger-max-width);
     margin: 0 auto;
   }
   .sunny-chat__trigger-input {
@@ -1627,12 +1668,12 @@ function ensureStyles() {
   }
   .sunny-provider-card__name {
     font-weight: 700;
-    font-size: 16px;
-    color: var(--sunny-color-secondary);
+    font-size: 1.143em;
+    color: var(--sunny-color-text);
     line-height: 1.4;
   }
   .sunny-provider-card__specialty {
-    font-size: 14px;
+    font-size: 1em;
     color: var(--sunny-gray-500);
     line-height: 1.4;
   }
@@ -1648,18 +1689,18 @@ function ensureStyles() {
     display: flex;
     align-items: flex-start;
     gap: 8px;
-    font-size: 14px;
+    font-size: 1em;
     line-height: 1.5;
   }
   .sunny-provider-card__meta-label {
-    font-size: 12px;
+    font-size: 0.857em;
     color: var(--sunny-gray-500);
     font-weight: 500;
     min-width: 60px;
   }
   .sunny-provider-card__meta-value {
-    font-size: 14px;
-    color: var(--sunny-color-secondary);
+    font-size: 1em;
+    color: var(--sunny-color-text);
     flex: 1;
   }
   .sunny-provider-card__languages {
@@ -1674,7 +1715,7 @@ function ensureStyles() {
     background: var(--sunny-color-primary-fill-10);
     border: 1px solid var(--sunny-color-primary-border);
     border-radius: 4px;
-    font-size: 12px;
+    font-size: 0.857em;
     color: var(--sunny-color-primary);
     font-weight: 500;
   }
@@ -1713,7 +1754,7 @@ function ensureStyles() {
     width: 100%;
   }
   .sunny-provider-card__loading-text {
-    font-size: 12px;
+    font-size: 0.857em;
     color: var(--sunny-color-primary-muted);
     text-align: center;
     margin-top: 8px;
@@ -1732,17 +1773,17 @@ function ensureStyles() {
   }
   .sunny-provider-card__error-title {
     font-weight: 600;
-    font-size: 15px;
+    font-size: 1.071em;
     color: #991b1b;
     margin-bottom: 4px;
   }
   .sunny-provider-card__error-message {
-    font-size: 14px;
+    font-size: 1em;
     color: #991b1b;
     margin-bottom: 8px;
   }
   .sunny-provider-card__error-id {
-    font-size: 12px;
+    font-size: 0.857em;
     color: #991b1b;
     opacity: 0.75;
   }
@@ -1791,7 +1832,7 @@ function ensureStyles() {
     display: flex;
     align-items: center;
     gap: 2px;
-    font-size: 12px;
+    font-size: 0.857em;
     color: var(--sunny-gray-500);
     line-height: 1;
   }
@@ -1819,12 +1860,12 @@ function ensureStyles() {
   }
   .sunny-provider-search-results__provider-name {
     font-weight: 700;
-    font-size: 16px;
-    color: var(--sunny-color-secondary);
+    font-size: 1.143em;
+    color: var(--sunny-color-text);
     line-height: 1.4;
   }
   .sunny-provider-search-results__provider-location-name {
-    font-size: 14px;
+    font-size: 1em;
     color: var(--sunny-color-primary-muted);
     font-weight: 400;
     line-height: 1.4;
@@ -1835,7 +1876,7 @@ function ensureStyles() {
     color: var(--sunny-color-primary-muted);
   }
   .sunny-provider-search-results__provider-specialty {
-    font-size: 12px;
+    font-size: 0.857em;
     color: var(--sunny-color-primary);
     font-weight: 500;
     line-height: 1.4;
@@ -1844,15 +1885,15 @@ function ensureStyles() {
     margin-top: 8px;
   }
   .sunny-provider-search-results__location-name {
-    font-size: 14px;
-    color: var(--sunny-color-secondary);
+    font-size: 1em;
+    color: var(--sunny-color-text);
     line-height: 1.5;
   }
   .sunny-provider-search-results__error {
     padding: 16px;
     text-align: center;
     color: var(--sunny-gray-500);
-    font-size: 14px;
+    font-size: 1em;
   }
 
   /* Approval Cards */
@@ -1883,23 +1924,23 @@ function ensureStyles() {
   }
   .sunny-approval-card__title {
     font-weight: 700;
-    font-size: 15px;
-    color: var(--sunny-color-secondary);
+    font-size: 1.071em;
+    color: var(--sunny-color-text);
   }
   .sunny-approval-card__status {
     margin-top: 4px;
-    font-size: 11px;
+    font-size: 0.786em;
     text-transform: uppercase;
     letter-spacing: 0.06em;
     color: var(--sunny-color-primary);
     font-weight: 700;
   }
   .sunny-approval-card__arguments {
-    background: #fff;
+    background: var(--sunny-color-background);
     border: 1px solid var(--sunny-gray-200);
     border-radius: 8px;
     padding: 12px;
-    font-size: 12px;
+    font-size: 0.857em;
     max-height: 200px;
     overflow: auto;
     font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
@@ -1917,7 +1958,7 @@ function ensureStyles() {
     border-radius: 8px;
     padding: 12px 18px;
     font-weight: 700;
-    font-size: 14px;
+    font-size: 1em;
     cursor: pointer;
     color: #fff;
     transition: background var(--sunny-transition-fast), transform var(--sunny-transition-fast), box-shadow var(--sunny-transition-fast);
@@ -1949,7 +1990,7 @@ function ensureStyles() {
   }
   .sunny-approval-card__error {
     margin-top: 10px;
-    font-size: 13px;
+    font-size: 0.929em;
     color: var(--sunny-color-danger);
     font-weight: 500;
   }
@@ -1968,7 +2009,7 @@ function ensureStyles() {
   }
   .sunny-verification-flow__error {
     color: var(--sunny-color-danger);
-    font-size: 14px;
+    font-size: 1em;
     text-align: center;
     padding: 12px;
   }
@@ -1986,10 +2027,10 @@ function ensureStyles() {
     flex: 1;
     padding: 8px 16px;
     border: 1px solid var(--sunny-gray-300);
-    background: #fff;
+    background: var(--sunny-color-background);
     color: var(--sunny-gray-600);
     border-radius: 8px 8px 0 0;
-    font-size: 14px;
+    font-size: 1em;
     font-weight: 500;
     cursor: pointer;
     transition: background var(--sunny-transition-fast), border-color var(--sunny-transition-fast), color var(--sunny-transition-fast);
@@ -2018,10 +2059,10 @@ function ensureStyles() {
     padding: 12px 16px;
     border: 1px solid var(--sunny-gray-300);
     border-radius: 8px;
-    font-size: 15px;
+    font-size: 1.071em;
     font-family: inherit;
-    background: #fff;
-    color: var(--sunny-color-secondary);
+    background: var(--sunny-color-background);
+    color: var(--sunny-color-text);
     transition: border-color var(--sunny-transition-fast), box-shadow var(--sunny-transition-fast);
     outline: none;
   }
@@ -2057,8 +2098,8 @@ function ensureStyles() {
     font-weight: 600;
     text-align: center;
     font-family: inherit;
-    background: #fff;
-    color: var(--sunny-color-secondary);
+    background: var(--sunny-color-background);
+    color: var(--sunny-color-text);
     transition: border-color var(--sunny-transition-fast), box-shadow var(--sunny-transition-fast);
     outline: none;
   }
@@ -2074,7 +2115,7 @@ function ensureStyles() {
   .sunny-verification-flow__status {
     padding: 10px 12px;
     border-radius: 8px;
-    font-size: 14px;
+    font-size: 1em;
     line-height: 1.5;
     display: none;
   }
@@ -2100,7 +2141,7 @@ function ensureStyles() {
     color: #fff;
     border: none;
     border-radius: 8px;
-    font-size: 15px;
+    font-size: 1.071em;
     font-weight: 600;
     cursor: pointer;
     transition: background var(--sunny-transition-fast), transform var(--sunny-transition-fast), box-shadow var(--sunny-transition-fast);
@@ -2124,7 +2165,7 @@ function ensureStyles() {
     border: 1px solid var(--sunny-color-accent);
     border-radius: 8px;
     color: #15803d;
-    font-size: 14px;
+    font-size: 1em;
     font-weight: 500;
     text-align: center;
   }

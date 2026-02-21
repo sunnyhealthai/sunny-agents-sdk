@@ -1,6 +1,6 @@
 export * from './types';
 export { SunnyAgentsClient } from './client/SunnyAgentsClient';
-export { attachSunnyChat, type VanillaChatOptions, type VanillaChatInstance, type VanillaChatColors } from './ui/vanillaChat';
+export { attachSunnyChat, type VanillaChatOptions, type VanillaChatInstance, type VanillaChatColors, type VanillaChatDimensions } from './ui/vanillaChat';
 
 // Unified entry point - recommended API
 export { createSunnyChat } from './createSunnyChat';

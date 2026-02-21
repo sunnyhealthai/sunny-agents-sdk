@@ -210,6 +210,22 @@ export interface VanillaChatColors {
   secondary?: string;
   /** Accent color used for success states and highlights. Default: #22c55e */
   accent?: string;
+  /** Background color for modal and content areas. Default: #fff */
+  background?: string;
+  /** Main text color. Default: #212124 */
+  text?: string;
+}
+
+/**
+ * Widget dimension configuration for the chat UI.
+ */
+export interface VanillaChatDimensions {
+  /** Modal width when expanded. Default: 1390px */
+  width?: string;
+  /** Modal height when expanded. Default: 980px */
+  height?: string;
+  /** Max width of the collapsed trigger bar. Default: 600px */
+  triggerMaxWidth?: string;
 }
 
 /**
@@ -267,5 +283,11 @@ export interface UnifiedSunnyChatOptions {
   placeholder?: string;
   /** Theme colors. */
   colors?: VanillaChatColors;
+  /** Base font size for chat content (e.g. "14px", "1rem"). Default: 14px */
+  fontSize?: string;
+  /** Font family for the chat UI (e.g. "'Inter', sans-serif"). Default: Lato */
+  fontFamily?: string;
+  /** Widget dimensions (modal width/height, trigger max-width). */
+  dimensions?: VanillaChatDimensions;
 }
 

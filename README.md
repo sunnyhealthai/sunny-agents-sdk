@@ -26,7 +26,7 @@ The easiest way to get started is with `createSunnyChat()`, which automatically 
 
 #### Passwordless
 
-Starts as anonymous chat. Users can verify via email/SMS when prompted. Customize with `headerTitle`, `placeholder`, and `colors`:
+Starts as anonymous chat. Users can verify via email/SMS when prompted. Customize with `headerTitle`, `placeholder`, `colors`, and other appearance options:
 
 ```ts
 import { createSunnyChat } from "@sunnyhealthai/agents-sdk";
@@ -94,6 +94,36 @@ await chat.setAuthType("saml");
 // Or switch to token exchange with a provider
 await chat.setAuthType("tokenExchange", {
   idTokenProvider: async () => getMyUserToken(),
+});
+```
+
+#### Brand Customization
+
+Enterprise partners can customize the SDK appearance to match their brand via configuration—no source changes required:
+
+```ts
+const chat = await createSunnyChat({
+  container: document.getElementById("chat"),
+  partnerIdentifier: "your-partner-name",
+  publicKey: "pk-sunnyagents_abc_xyz",
+  authType: "passwordless",
+  // Appearance
+  headerTitle: "Support Chat",
+  placeholder: "How can we help?",
+  fontSize: "16px", // Base font size (e.g. "14px", "1rem")
+  fontFamily: "'Inter', sans-serif", // Custom font
+  colors: {
+    primary: "#006fff",
+    secondary: "#212124",
+    accent: "#22c55e",
+    background: "#fff", // Modal and content background
+    text: "#212124", // Main text color
+  },
+  dimensions: {
+    width: "1200px",
+    height: "800px",
+    triggerMaxWidth: "500px",
+  },
 });
 ```
 
@@ -484,6 +514,9 @@ createSunnyChat(options: UnifiedSunnyChatOptions): Promise<VanillaChatInstance>
 - `headerTitle?: string` - Title displayed in chat header (default: `"Sunny Agents"`)
 - `placeholder?: string` - Input placeholder text (default: `"Ask anything..."`)
 - `colors?: VanillaChatColors` - Custom theme colors
+- `fontSize?: string` - Base font size for chat content (e.g. `"14px"`, `"1rem"`). Default: `"14px"`
+- `fontFamily?: string` - Font family for the chat UI (e.g. `"'Inter', sans-serif"`). Default: Lato
+- `dimensions?: VanillaChatDimensions` - Widget dimensions (modal width/height, trigger max-width)
 
 **Returns:**
 
@@ -586,6 +619,14 @@ Mount a ready-to-use chat widget.
   - `primary?: string` - Primary color for user messages, send button, and focus states (default: `"#006fff"`)
   - `secondary?: string` - Secondary color for text and UI elements (default: `"#212124"`)
   - `accent?: string` - Accent color for success states and highlights (default: `"#22c55e"`)
+  - `background?: string` - Background color for modal and content areas (default: `"#fff"`)
+  - `text?: string` - Main text color (default: `"#212124"`)
+- `fontSize?: string` - Base font size for chat content (e.g. `"14px"`, `"1rem"`). Default: `"14px"`
+- `fontFamily?: string` - Font family for the chat UI (e.g. `"'Inter', sans-serif"`). Default: Lato
+- `dimensions?: VanillaChatDimensions` - Widget dimensions
+  - `width?: string` - Modal width when expanded (default: `"1390px"`)
+  - `height?: string` - Modal height when expanded (default: `"980px"`)
+  - `triggerMaxWidth?: string` - Max width of collapsed trigger bar (default: `"600px"`)
 
 #### Returns (`VanillaChatInstance`)
 

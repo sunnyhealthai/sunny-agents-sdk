@@ -76,10 +76,15 @@ async function initializeChat(variant: ChatVariant): Promise<ChatInstance> {
           ...baseOptions,
           headerTitle: 'Sunny Chat',
           placeholder: 'How can I help today?',
+          fontFamily: "'Georgia', serif",
+          fontSize: '16px',
+          dimensions: { width: '900px', height: '700px', triggerMaxWidth: '500px' },
           colors: {
             primary: '#7c3aed',
             secondary: '#4c1d95',
             accent: '#f59e0b',
+            background: '#faf5ff',
+            text: '#1e1b4b',
           },
         },
   );
