@@ -267,3 +267,126 @@ h2 {
   color: #048db4;
   border: 1px solid rgba(4, 141, 180, 0.2);
 }
+
+/* --- Profile Sync Panel --- */
+
+.profile-sync-panel h2 small {
+  font-size: 0.7rem;
+  font-weight: 400;
+  color: rgba(12, 27, 51, 0.45);
+  letter-spacing: 0;
+}
+
+.profile-sync-desc {
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: rgba(12, 27, 51, 0.65);
+}
+
+.profile-sync-panel fieldset {
+  border: 1px solid rgba(12, 27, 51, 0.12);
+  border-radius: 8px;
+  padding: 1rem;
+  margin: 0 0 1rem;
+}
+
+.profile-sync-panel legend {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: rgba(12, 27, 51, 0.7);
+  padding: 0 0.4rem;
+}
+
+.profile-sync-panel select {
+  width: 100%;
+  padding: 0.75rem;
+  border-radius: 8px;
+  border: 1px solid rgba(12, 27, 51, 0.2);
+  background: #fff;
+  color: #0c1b33;
+  font-size: 1rem;
+}
+
+.field-row {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.field-row > .form-group {
+  flex: 1;
+}
+
+.insurance-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  margin-bottom: 0.5rem;
+}
+
+.insurance-row input {
+  flex: 1;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid rgba(12, 27, 51, 0.2);
+  background: #fff;
+  color: #0c1b33;
+  font-size: 0.9rem;
+}
+
+.remove-insurance-btn {
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  margin-top: 2px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(220, 38, 38, 0.1);
+  color: #dc2626;
+  font-size: 1.1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+
+.remove-insurance-btn:hover {
+  background: rgba(220, 38, 38, 0.2);
+}
+
+.add-insurance-btn {
+  padding: 0.45rem 0.9rem;
+  border: 1px dashed rgba(12, 27, 51, 0.25);
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(12, 27, 51, 0.6);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.add-insurance-btn:hover {
+  border-color: #048db4;
+  color: #048db4;
+}
+
+.profile-sync-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.clear-profile-btn {
+  padding: 0.55rem 1.2rem;
+  border-radius: 8px;
+  border: none;
+  background: rgba(12, 27, 51, 0.08);
+  color: #0c1b33;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.clear-profile-btn:hover {
+  background: rgba(12, 27, 51, 0.14);
+}

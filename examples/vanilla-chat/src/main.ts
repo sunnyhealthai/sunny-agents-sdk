@@ -1,4 +1,4 @@
-import { createSunnyChat, type SdkAuthType } from '@sunnyhealthai/agents-sdk';
+import { createSunnyChat, type SdkAuthType, type AuthUpgradeProfileSyncData } from '@sunnyhealthai/agents-sdk';
 import './style.css';
 
 type ChatVariant = 'default' | 'customized';
@@ -37,6 +37,72 @@ function getActiveChat(): ChatInstance | null {
   return activeVariant === 'default' ? chatDefault : chatCustomized;
 }
 
+function val(id: string): string {
+  return (document.getElementById(id) as HTMLInputElement | HTMLSelectElement | null)?.value.trim() ?? '';
+}
+
+function getProfileSyncData(): AuthUpgradeProfileSyncData | null {
+  let hasData = false;
+
+  const firstName = val('ps-first-name');
+  const lastName = val('ps-last-name');
+  const phone = val('ps-phone');
+  const dob = val('ps-dob');
+  const gender = val('ps-gender');
+  const hasProfile = !!(firstName || lastName || phone || dob || gender);
+
+  const addr1 = val('ps-address1');
+  const addr2 = val('ps-address2');
+  const city = val('ps-city');
+  const state = val('ps-state');
+  const zip = val('ps-zip');
+  const country = val('ps-country');
+  const hasAddress = !!(addr1 && city && state && zip);
+
+  const insuranceRows = document.querySelectorAll('#insurance-rows .insurance-row');
+  const insurances: AuthUpgradeProfileSyncData['insurances'] = [];
+  insuranceRows.forEach((row) => {
+    const planId = (row.querySelector('.ins-plan-id') as HTMLInputElement)?.value.trim();
+    const memberId = (row.querySelector('.ins-member-id') as HTMLInputElement)?.value.trim();
+    const groupId = (row.querySelector('.ins-group-id') as HTMLInputElement)?.value.trim();
+    if (planId && memberId && groupId) {
+      insurances!.push({ partner_plan_id: planId, member_id: memberId, group_id: groupId });
+    }
+  });
+
+  const result: AuthUpgradeProfileSyncData = {};
+
+  if (hasProfile) {
+    hasData = true;
+    result.user_profile = {
+      ...(firstName ? { first_name: firstName } : {}),
+      ...(lastName ? { last_name: lastName } : {}),
+      ...(phone ? { phone } : {}),
+      ...(dob ? { date_of_birth: dob } : {}),
+      ...(gender ? { gender } : {}),
+    };
+  }
+
+  if (hasAddress) {
+    hasData = true;
+    result.user_address = {
+      address_line_1: addr1,
+      ...(addr2 ? { address_line_2: addr2 } : {}),
+      city,
+      state,
+      zip_code: zip,
+      ...(country ? { country } : {}),
+    };
+  }
+
+  if (insurances!.length > 0) {
+    hasData = true;
+    result.insurances = insurances;
+  }
+
+  return hasData ? result : null;
+}
+
 async function initializeChat(variant: ChatVariant): Promise<ChatInstance> {
   const isDefault = variant === 'default';
   const chatRef = isDefault ? chatDefault : chatCustomized;
@@ -50,6 +116,7 @@ async function initializeChat(variant: ChatVariant): Promise<ChatInstance> {
     console.warn('[VanillaChat] VITE_SUNNY_PUBLIC_KEY not set. Set it in your .env file.');
   }
 
+  const profileSync = getProfileSyncData();
   const baseOptions = {
     container,
     partnerIdentifier,
@@ -58,6 +125,7 @@ async function initializeChat(variant: ChatVariant): Promise<ChatInstance> {
     websocketUrl,
     devRoute,
     ...(authType === 'tokenExchange' ? { idTokenProvider: getIdTokenProvider() } : {}),
+    ...(profileSync ? { authUpgradeProfileSync: profileSync } : {}),
   };
 
   const chat = await createSunnyChat(
@@ -150,10 +218,13 @@ authTabs.forEach((tab) => {
         if (targetTab === 'manual') {
           await chat.setAuthType('tokenExchange', {
             idTokenProvider: getIdTokenProvider(),
+            authUpgradeProfileSync: getProfileSyncData() ?? undefined,
           });
           console.log('[VanillaChat] Switched to tokenExchange auth');
         } else if (targetTab === 'passwordless') {
-          await chat.setAuthType('passwordless');
+          await chat.setAuthType('passwordless', {
+            authUpgradeProfileSync: getProfileSyncData() ?? undefined,
+          });
           console.log('[VanillaChat] Switched to passwordless auth');
         }
       } catch (err) {
@@ -215,7 +286,9 @@ passwordlessForm?.addEventListener('submit', async (event) => {
   const chat = getActiveChat();
   if (chat?.setAuthType && authType !== 'passwordless') {
     try {
-      await chat.setAuthType('passwordless');
+      await chat.setAuthType('passwordless', {
+        authUpgradeProfileSync: getProfileSyncData() ?? undefined,
+      });
     } catch (err) {
       console.warn('[VanillaChat] Failed to switch to passwordless:', err);
     }
@@ -274,7 +347,9 @@ document.querySelectorAll('[data-auth-type]').forEach((btn) => {
     const chat = getActiveChat();
     if (chat?.setAuthType) {
       try {
-        await chat.setAuthType(newAuthType);
+        await chat.setAuthType(newAuthType, {
+          authUpgradeProfileSync: getProfileSyncData() ?? undefined,
+        });
         showStatus(`Switched to ${newAuthType} auth`, 'success');
       } catch (err) {
         showStatus(`Failed to switch auth: ${err instanceof Error ? err.message : String(err)}`, 'error');
@@ -307,6 +382,7 @@ tokenForm?.addEventListener('submit', async (event) => {
     try {
       await chat.setAuthType('tokenExchange', {
         idTokenProvider: async () => inMemoryIdToken,
+        authUpgradeProfileSync: getProfileSyncData() ?? undefined,
       });
       showStatus('Token exchange configured', 'success');
     } catch (err) {
@@ -323,12 +399,65 @@ clearTokenBtn?.addEventListener('click', async () => {
   const chat = getActiveChat();
   if (chat?.setAuthType) {
     try {
-      await chat.setAuthType('passwordless');
+      await chat.setAuthType('passwordless', {
+        authUpgradeProfileSync: getProfileSyncData() ?? undefined,
+      });
     } catch (err) {
       console.warn('[VanillaChat] Failed to switch to passwordless:', err);
     }
   }
   console.log('[VanillaChat] Token cleared, switched to passwordless');
+});
+
+// --- Profile Sync: insurance row management ---
+const insuranceRowsContainer = document.getElementById('insurance-rows');
+const addInsuranceBtn = document.getElementById('add-insurance-btn');
+
+function createInsuranceRow(): HTMLDivElement {
+  const row = document.createElement('div');
+  row.className = 'insurance-row';
+  row.innerHTML =
+    '<input type="text" class="ins-plan-id" placeholder="Partner Plan ID (UUID)" />' +
+    '<input type="text" class="ins-member-id" placeholder="Member ID" />' +
+    '<input type="text" class="ins-group-id" placeholder="Group ID" />' +
+    '<button type="button" class="remove-insurance-btn" title="Remove">&times;</button>';
+  return row;
+}
+
+insuranceRowsContainer?.addEventListener('click', (e) => {
+  const btn = (e.target as HTMLElement).closest('.remove-insurance-btn');
+  if (!btn) return;
+  const row = btn.closest('.insurance-row');
+  if (row && insuranceRowsContainer.querySelectorAll('.insurance-row').length > 1) {
+    row.remove();
+  } else if (row) {
+    row.querySelectorAll('input').forEach((input) => { (input as HTMLInputElement).value = ''; });
+  }
+});
+
+addInsuranceBtn?.addEventListener('click', () => {
+  insuranceRowsContainer?.appendChild(createInsuranceRow());
+});
+
+// --- Profile Sync: clear all fields ---
+document.getElementById('clear-profile-btn')?.addEventListener('click', () => {
+  const panel = document.querySelector('.profile-sync-panel');
+  if (!panel) return;
+  panel.querySelectorAll('input').forEach((input) => {
+    if ((input as HTMLInputElement).id === 'ps-country') {
+      (input as HTMLInputElement).value = 'USA';
+    } else {
+      (input as HTMLInputElement).value = '';
+    }
+  });
+  const genderSelect = document.getElementById('ps-gender') as HTMLSelectElement | null;
+  if (genderSelect) genderSelect.value = '';
+
+  // Reset insurance rows to a single empty row
+  if (insuranceRowsContainer) {
+    insuranceRowsContainer.innerHTML = '';
+    insuranceRowsContainer.appendChild(createInsuranceRow());
+  }
 });
 
 window.addEventListener('beforeunload', () => {

@@ -208,7 +208,6 @@ export class SunnyAgentsClient {
     }
   }
 
-  // Ensure WebSocket is connected and authenticated (if configured)
   private async ensureConnectionAndAuth(): Promise<void> {
     try {
       await this.ws.connect();
@@ -217,14 +216,20 @@ export class SunnyAgentsClient {
       console.error('[SunnyAgentsClient] Failed to connect WebSocket:', errorMessage);
       throw new Error(`Failed to connect to chat service: ${errorMessage}`);
     }
-    // Attempt to upgrade auth if we have a token provider configured
-    // This is idempotent - if already authenticated, it will return early
-    if (this.config.idTokenProvider && this.config.tokenExchange) {
-      await this.ws.upgradeAuthIfPossible(false).catch((err) => {
-        // Log but don't throw - allow anonymous operation
-        console.warn('[SunnyAgentsClient] Auth upgrade failed, continuing as anonymous:', err);
-      });
+
+    // Wait for SDK session to be established on the backend before sending messages
+    if (this.config.publicKey) {
+      await this.ws.waitForSdkSession();
     }
+
+    // Attempt auth upgrade if a token provider is configured (any auth type).
+    // This is idempotent - if already authenticated, it will return early.
+    await this.ws.upgradeAuthIfPossible({
+      migrateHistory: true,
+      profileSync: this.config.authUpgradeProfileSync,
+    }).catch((err) => {
+      console.warn('[SunnyAgentsClient] Auth upgrade failed, continuing as anonymous:', err);
+    });
   }
 
   async sendMessage(message: string, options?: SendMessageOptions): Promise<{ conversationId: string }> {

@@ -102,6 +102,97 @@ const chat = await createSunnyChat({
         </div>
       </section>
 
+      <section class="token-panel profile-sync-panel">
+        <h2>Profile Sync <small>(authUpgradeProfileSync)</small></h2>
+        <p class="profile-sync-desc">
+          Optional profile data sent with <code>auth.upgrade</code>. Only non-empty fields are included.
+        </p>
+
+        <fieldset id="profile-fieldset">
+          <legend>User Profile</legend>
+          <div class="field-row">
+            <div class="form-group">
+              <label for="ps-first-name">First Name</label>
+              <input id="ps-first-name" type="text" placeholder="John" />
+            </div>
+            <div class="form-group">
+              <label for="ps-last-name">Last Name</label>
+              <input id="ps-last-name" type="text" placeholder="Doe" />
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="form-group">
+              <label for="ps-phone">Phone</label>
+              <input id="ps-phone" type="tel" placeholder="+1234567890" />
+            </div>
+            <div class="form-group">
+              <label for="ps-dob">Date of Birth</label>
+              <input id="ps-dob" type="date" />
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="form-group">
+              <label for="ps-gender">Gender</label>
+              <select id="ps-gender">
+                <option value="">— select —</option>
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset id="address-fieldset">
+          <legend>User Address</legend>
+          <div class="form-group">
+            <label for="ps-address1">Address Line 1</label>
+            <input id="ps-address1" type="text" placeholder="123 Main St" />
+          </div>
+          <div class="form-group">
+            <label for="ps-address2">Address Line 2</label>
+            <input id="ps-address2" type="text" placeholder="Apt 4B" />
+          </div>
+          <div class="field-row">
+            <div class="form-group">
+              <label for="ps-city">City</label>
+              <input id="ps-city" type="text" placeholder="San Francisco" />
+            </div>
+            <div class="form-group">
+              <label for="ps-state">State</label>
+              <input id="ps-state" type="text" placeholder="CA" maxlength="2" />
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="form-group">
+              <label for="ps-zip">Zip Code</label>
+              <input id="ps-zip" type="text" placeholder="94102" />
+            </div>
+            <div class="form-group">
+              <label for="ps-country">Country</label>
+              <input id="ps-country" type="text" placeholder="USA" value="USA" />
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset id="insurance-fieldset">
+          <legend>Insurances</legend>
+          <div id="insurance-rows">
+            <div class="insurance-row">
+              <input type="text" class="ins-plan-id" placeholder="Partner Plan ID (UUID)" />
+              <input type="text" class="ins-member-id" placeholder="Member ID" />
+              <input type="text" class="ins-group-id" placeholder="Group ID" />
+              <button type="button" class="remove-insurance-btn" title="Remove">&times;</button>
+            </div>
+          </div>
+          <button type="button" id="add-insurance-btn" class="add-insurance-btn">+ Add Insurance</button>
+        </fieldset>
+
+        <div class="profile-sync-actions">
+          <button type="button" id="clear-profile-btn" class="clear-profile-btn">Clear All</button>
+        </div>
+      </section>
+
       <section class="chat-panel">
         <h2>Chat Variants</h2>
         <div class="chat-variant-tabs">

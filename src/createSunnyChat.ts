@@ -2,7 +2,51 @@ import { Auth0Provider } from './client/auth0Provider';
 import { LLMWebSocketManager } from './client/llmWebSocket';
 import { PasswordlessAuthManager } from './client/passwordlessAuth';
 import { attachSunnyChat, type VanillaChatInstance } from './ui/vanillaChat';
-import type { UnifiedSunnyChatOptions, SunnyAgentsConfig, SdkAuthType, SdkAuthConfig } from './types';
+import type {
+  AuthUpgradeProfileSyncData,
+  SdkAuthConfig,
+  SdkAuthType,
+  SunnyAgentsConfig,
+  UnifiedSunnyChatOptions,
+} from './types';
+
+type ProfileSyncInput = AuthUpgradeProfileSyncData | (() => Promise<AuthUpgradeProfileSyncData | null>);
+
+/**
+ * Fetch SDK configuration from the dedicated HTTP endpoint.
+ * Derives the HTTP URL from the WebSocket URL automatically.
+ */
+async function fetchSdkConfig(options: {
+  websocketUrl?: string;
+  publicKey: string;
+  partnerIdentifier: string;
+}): Promise<SdkAuthConfig> {
+  const baseUrl = options.websocketUrl ?? 'wss://chat.api.sunnyhealthai-staging.com';
+  const httpUrl = baseUrl
+    .replace(/^wss:\/\//, 'https://')
+    .replace(/^ws:\/\//, 'http://');
+
+  const url = new URL('/sdk/config', httpUrl);
+  const response = await fetch(url.toString(), {
+    method: 'GET',
+    headers: {
+      'x-sunny-partner-identifier': options.partnerIdentifier,
+      'x-sunny-api-key': options.publicKey,
+    },
+  });
+
+  if (!response.ok) {
+    let errorMessage = response.statusText;
+    try {
+      const errorBody = await response.json();
+      errorMessage = errorBody.error?.message ?? errorMessage;
+    } catch { /* use statusText */ }
+    throw new Error(`[createSunnyChat] SDK config fetch failed: ${errorMessage}`);
+  }
+
+  const data = await response.json();
+  return data.config as SdkAuthConfig;
+}
 
 /**
  * Activate an auth type using server-provided config.
@@ -17,6 +61,7 @@ async function activateAuthType(
   partnerIdentifier: string,
   idTokenProvider?: () => Promise<string | null>,
   devRoute?: string,
+  authUpgradeProfileSync?: ProfileSyncInput,
 ): Promise<{ passwordlessAuth?: PasswordlessAuthManager }> {
   switch (authType) {
     case 'passwordless': {
@@ -74,13 +119,11 @@ async function activateAuthType(
         }
       }
 
-      // If authenticated, upgrade the websocket connection
+      // Store the ID token for deferred auth upgrade (happens on first message)
       if (auth0Provider.isAuthenticated()) {
         const idToken = auth0Provider.getIdToken();
         if (idToken) {
-          await wsManager.upgradeAuth(idToken, true).catch((err: unknown) => {
-            console.warn('[createSunnyChat] Auth upgrade failed:', err);
-          });
+          wsManager.setTokenProvider(async () => idToken);
         }
       }
       return {};
@@ -91,7 +134,7 @@ async function activateAuthType(
         throw new Error('[createSunnyChat] idTokenProvider is required when authType is "tokenExchange"');
       }
 
-      // Configure token exchange on the wsManager using server config
+      // Configure token exchange on the wsManager (auth upgrade deferred to first message)
       wsManager.configureTokenExchange(idTokenProvider, {
         partnerName: partnerIdentifier,
         audience: serverConfig.audience ?? '',
@@ -99,11 +142,6 @@ async function activateAuthType(
         organization: serverConfig.organization ?? '',
         tokenExchangeUrl: serverConfig.token_exchange_url,
         devRoute,
-      });
-
-      // Attempt auth upgrade
-      await wsManager.upgradeAuthIfPossible(true).catch((err: unknown) => {
-        console.warn('[createSunnyChat] Token exchange auth upgrade failed, continuing as anonymous:', err);
       });
       return {};
     }
@@ -118,7 +156,8 @@ async function activateAuthType(
  *
  * Three required parameters: partnerIdentifier, publicKey, authType.
  * All auth configuration (Auth0 domain, client ID, connection, etc.)
- * comes from the server via sdk.session.create.
+ * is fetched from the server via the HTTP POST /sdk/config endpoint.
+ * The WebSocket connection is deferred until the user sends a message.
  *
  * @example
  * ```ts
@@ -186,10 +225,13 @@ export async function createSunnyChat(options: UnifiedSunnyChatOptions): Promise
     publicKey: options.publicKey,
   });
 
-  // --- Connect and wait for SDK session config ---
-  await wsManager.connect();
-  const serverConfig = await wsManager.waitForSdkSession();
-  console.log('[createSunnyChat] SDK session established, server config:', serverConfig);
+  // --- Fetch SDK config via HTTP (no WebSocket connection yet) ---
+  const serverConfig = await fetchSdkConfig({
+    websocketUrl: options.websocketUrl,
+    publicKey: options.publicKey,
+    partnerIdentifier: options.partnerIdentifier,
+  });
+  console.log('[createSunnyChat] SDK config fetched via HTTP:', serverConfig);
 
   // --- Activate auth type ---
   const { passwordlessAuth } = await activateAuthType(
@@ -199,6 +241,7 @@ export async function createSunnyChat(options: UnifiedSunnyChatOptions): Promise
     options.partnerIdentifier,
     options.idTokenProvider,
     options.devRoute,
+    options.authUpgradeProfileSync,
   );
 
   // --- Build SunnyAgentsConfig for the chat client ---
@@ -207,7 +250,8 @@ export async function createSunnyChat(options: UnifiedSunnyChatOptions): Promise
     partnerName: options.partnerIdentifier,
     publicKey: options.publicKey,
     wsManager,
-    createServerConversations: wsManager.getIsAuthenticated(),
+    createServerConversations: false,
+    authUpgradeProfileSync: options.authUpgradeProfileSync,
   };
 
   // --- Create chat instance ---
@@ -226,27 +270,33 @@ export async function createSunnyChat(options: UnifiedSunnyChatOptions): Promise
 
   // --- Attach setAuthType for runtime switching ---
   const instance = chatInstance as VanillaChatInstance & {
-    setAuthType: (authType: SdkAuthType, opts?: { idTokenProvider?: () => Promise<string | null> }) => Promise<void>;
+    setAuthType: (
+      authType: SdkAuthType,
+      opts?: {
+        idTokenProvider?: () => Promise<string | null>;
+        authUpgradeProfileSync?: ProfileSyncInput;
+      },
+    ) => Promise<void>;
   };
 
   instance.setAuthType = async (
     newAuthType: SdkAuthType,
-    opts?: { idTokenProvider?: () => Promise<string | null> },
+    opts?: {
+      idTokenProvider?: () => Promise<string | null>;
+      authUpgradeProfileSync?: ProfileSyncInput;
+    },
   ) => {
-    const cachedConfig = wsManager.getSdkAuthConfig();
-    if (!cachedConfig) {
-      throw new Error('[setAuthType] SDK session config not available. Was createSunnyChat used?');
-    }
     if (newAuthType === 'tokenExchange' && !opts?.idTokenProvider && !options.idTokenProvider) {
       throw new Error('[setAuthType] idTokenProvider is required when switching to tokenExchange');
     }
     await activateAuthType(
       newAuthType,
-      cachedConfig,
+      serverConfig,
       wsManager,
       options.partnerIdentifier,
       opts?.idTokenProvider ?? options.idTokenProvider,
       options.devRoute,
+      opts?.authUpgradeProfileSync ?? options.authUpgradeProfileSync,
     );
 
     // Update conversation creation mode based on new auth state

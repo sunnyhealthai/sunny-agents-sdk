@@ -69,6 +69,11 @@ export interface SunnyAgentsConfig {
     tokenExchangeUrl?: string;
     devRoute?: string;
   };
+  /**
+   * Optional profile-sync data to send with auth.upgrade (user_profile, user_address, insurances, dependents).
+   * Can be static data or an async provider resolved at auth time.
+   */
+  authUpgradeProfileSync?: AuthUpgradeProfileSyncData | (() => Promise<AuthUpgradeProfileSyncData | null>);
 }
 
 export interface SendMessageOptions {
@@ -229,6 +234,72 @@ export interface VanillaChatDimensions {
 }
 
 /**
+ * Optional user profile for auth.upgrade (SDK: partner pre-collected data).
+ * All fields optional; backend uses upsert semantics (only overwrites non-null values).
+ */
+export interface AuthUpgradeProfile {
+  first_name?: string | null;
+  last_name?: string | null;
+  phone?: string | null;
+  date_of_birth?: string | null; // YYYY-MM-DD format
+  gender?: string | null; // "male", "female", "other"
+}
+
+/**
+ * Optional user address for auth.upgrade (SDK: partner pre-collected data).
+ * address_line_1, city, state, zip_code required when provided.
+ */
+export interface AuthUpgradeAddress {
+  address_line_1: string;
+  address_line_2?: string | null;
+  city: string;
+  state: string;
+  zip_code: string;
+  country?: string; // defaults to "USA"
+}
+
+/**
+ * Optional insurance for auth.upgrade. Backend resolves via enterprise.partner_plans.
+ * Requires partner_identifier on SDK connection.
+ */
+export interface AuthUpgradeInsurance {
+  partner_plan_id: string; // UUID
+  member_id: string;
+  group_id: string;
+}
+
+/**
+ * Optional dependent for auth.upgrade (SDK: partner pre-collected data).
+ */
+export interface AuthUpgradeDependent {
+  first_name: string;
+  last_name: string;
+  date_of_birth: string; // YYYY-MM-DD
+  gender?: string | null;
+  relationship_code: string; // Stedi code, e.g. "01" = spouse, "19" = child
+  member_id?: string | null;
+  insurance_index?: number | null; // index into the insurances array
+}
+
+/**
+ * Container for optional profile-sync data sent with auth.upgrade.
+ */
+export interface AuthUpgradeProfileSyncData {
+  user_profile?: AuthUpgradeProfile | null;
+  user_address?: AuthUpgradeAddress | null;
+  insurances?: AuthUpgradeInsurance[] | null;
+  dependents?: AuthUpgradeDependent[] | null;
+}
+
+/**
+ * Options for auth.upgrade. Token is required; profile sync and migrate_history are optional.
+ */
+export interface AuthUpgradeRequest extends AuthUpgradeProfileSyncData {
+  token: string;
+  migrateHistory?: boolean;
+}
+
+/**
  * Auth types the developer must choose from.
  * - passwordless: starts unauthenticated, user can verify via email/SMS
  * - saml: triggers SAML auto-login popup on init
@@ -289,5 +360,10 @@ export interface UnifiedSunnyChatOptions {
   fontFamily?: string;
   /** Widget dimensions (modal width/height, trigger max-width). */
   dimensions?: VanillaChatDimensions;
+  /**
+   * Optional profile-sync data to send with auth.upgrade (user_profile, user_address, insurances, dependents).
+   * Can be static data or an async provider resolved at auth time.
+   */
+  authUpgradeProfileSync?: AuthUpgradeProfileSyncData | (() => Promise<AuthUpgradeProfileSyncData | null>);
 }
 

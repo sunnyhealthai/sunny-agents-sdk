@@ -13,7 +13,7 @@ export { PasswordlessAuthManager, type PasswordlessAuthConfig, type Passwordless
 /** @internal */
 export { LLMWebSocketManager } from './client/llmWebSocket';
 /** @internal */
-export type { LLMWebSocketConfig, AuthUpgradeHandler, MessageHandler } from './client/llmWebSocket';
+export type { LLMWebSocketConfig, AuthUpgradeHandler, MessageHandler, UpgradeAuthIfPossibleOptions } from './client/llmWebSocket';
 /** @internal */
 export { exchangeIdTokenForAccessToken, TokenExchangeManager, type TokenExchangeConfig, type TokenExchangeResponse } from './client/tokenExchange';
 

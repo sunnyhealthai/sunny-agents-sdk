@@ -61,6 +61,45 @@ const chat = await createSunnyChat({
 
 **Note:** `idTokenProvider` is required when `authType` is `'tokenExchange'`. All token exchange configuration comes from the server — you do not pass `tokenExchange` when using `createSunnyChat`.
 
+#### Profile sync during auth upgrade
+
+When upgrading from anonymous to authenticated, you can optionally send user profile, address, and insurance data so the backend persists it atomically during auth:
+
+```ts
+import { createSunnyChat, type AuthUpgradeProfile, type AuthUpgradeAddress, type AuthUpgradeInsurance } from "@sunnyhealthai/agents-sdk";
+
+const chat = await createSunnyChat({
+  container: document.getElementById("chat"),
+  partnerIdentifier: "your-partner-name",
+  publicKey: "pk-sunnyagents_abc_xyz",
+  authType: "tokenExchange",
+  idTokenProvider: async () => getMyUserToken(),
+  authUpgradeProfileSync: {
+    user_profile: {
+      first_name: "John",
+      last_name: "Doe",
+      phone: "+1234567890",
+      date_of_birth: "1990-01-01", // YYYY-MM-DD
+      gender: "male",
+    },
+    user_address: {
+      address_line_1: "123 Main St",
+      city: "San Francisco",
+      state: "CA",
+      zip_code: "94102",
+      country: "USA",
+    },
+    insurances: [{
+      partner_plan_id: "uuid-from-partner-plans",
+      member_id: "M123456",
+      group_id: "G789",
+    }],
+  },
+});
+```
+
+`authUpgradeProfileSync` can also be an async provider: `async () => ({ user_profile: {...} })`.
+
 #### SAML/OIDC (Enterprise SSO)
 
 For SAML or OIDC via Auth0. Authentication popup triggers automatically. Auth configuration (domain, client ID, connection name) comes from the server:
@@ -491,6 +530,37 @@ const { client, destroy } = attachSunnyChat({
 
 See the [vanilla chat example](examples/vanilla-chat/) for a complete implementation with passwordless authentication.
 
+## Breaking change: auth upgrade API
+
+`LLMWebSocketManager.upgradeAuth` and `upgradeAuthIfPossible` now use options-based signatures:
+
+**Before:**
+```ts
+await wsManager.upgradeAuth(token, true);
+await wsManager.upgradeAuthIfPossible(true);
+```
+
+**After:**
+```ts
+await wsManager.upgradeAuth({ token, migrateHistory: true });
+await wsManager.upgradeAuthIfPossible({ migrateHistory: true });
+```
+
+Profile-sync data can be included in both:
+```ts
+await wsManager.upgradeAuth({
+  token,
+  migrateHistory: true,
+  user_profile: { first_name: "John", last_name: "Doe" },
+  user_address: { address_line_1: "123 Main St", city: "SF", state: "CA", zip_code: "94102" },
+});
+
+await wsManager.upgradeAuthIfPossible({
+  migrateHistory: true,
+  profileSync: { user_profile: { first_name: "John" } },
+});
+```
+
 ## API Reference
 
 ### createSunnyChat
@@ -517,13 +587,14 @@ createSunnyChat(options: UnifiedSunnyChatOptions): Promise<VanillaChatInstance>
 - `fontSize?: string` - Base font size for chat content (e.g. `"14px"`, `"1rem"`). Default: `"14px"`
 - `fontFamily?: string` - Font family for the chat UI (e.g. `"'Inter', sans-serif"`). Default: Lato
 - `dimensions?: VanillaChatDimensions` - Widget dimensions (modal width/height, trigger max-width)
+- `authUpgradeProfileSync?: AuthUpgradeProfileSyncData | (() => Promise<AuthUpgradeProfileSyncData | null>)` - Optional profile-sync data (user_profile, user_address, insurances) sent with auth.upgrade
 
 **Returns:**
 
 - `Promise<VanillaChatInstance>` - Promise resolving to chat instance with:
   - `client: SunnyAgentsClient` - The underlying client instance
   - `destroy(): void` - Cleanup function to unmount the widget
-  - `setAuthType(authType: SdkAuthType, options?: { idTokenProvider? }): Promise<void>` - Switch authentication type at runtime
+  - `setAuthType(authType: SdkAuthType, options?: { idTokenProvider?; authUpgradeProfileSync? }): Promise<void>` - Switch authentication type at runtime
 
 **How It Works:**
 
@@ -567,6 +638,7 @@ new SunnyAgentsClient(config?: SunnyAgentsConfig)
 - `sessionStorageKey?: string` - Key for session persistence (defaults to `"sunny_agents_session_id"`)
 - `initialConversationId?: string` - Initial conversation ID to use
 - `createServerConversations?: boolean` - Whether to create/persist conversations on server (defaults to `true` if `idTokenProvider` and `tokenExchange` are provided, otherwise `false`)
+- `authUpgradeProfileSync?: AuthUpgradeProfileSyncData | (() => Promise<AuthUpgradeProfileSyncData | null>)` - Optional profile-sync data sent with auth.upgrade
 
 #### Methods
 
@@ -680,6 +752,11 @@ import {
   type UnifiedSunnyChatOptions, // Unified config type for createSunnyChat
   type SdkAuthType, // 'passwordless' | 'saml' | 'oidc' | 'tokenExchange'
   type SdkAuthConfig, // Server-provided auth configuration
+  type AuthUpgradeProfile, // Profile fields for auth.upgrade
+  type AuthUpgradeAddress, // Address for auth.upgrade
+  type AuthUpgradeInsurance, // Insurance for auth.upgrade
+  type AuthUpgradeProfileSyncData, // Container for profile-sync data
+  type AuthUpgradeRequest, // Options for upgradeAuth
   type SendMessageOptions,
   type SunnyAgentsClientSnapshot,
   type FileAttachment, // File attachment for sendMessage

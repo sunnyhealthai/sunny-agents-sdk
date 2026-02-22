@@ -1,5 +1,11 @@
-import type { SdkAuthConfig } from '../types.js';
+import type { AuthUpgradeProfileSyncData, AuthUpgradeRequest, SdkAuthConfig } from '../types.js';
 import { TokenExchangeManager, type TokenExchangeConfig } from './tokenExchange.js';
+
+/** Options for upgradeAuthIfPossible (token comes from token provider). */
+export interface UpgradeAuthIfPossibleOptions {
+  migrateHistory?: boolean;
+  profileSync?: AuthUpgradeProfileSyncData | (() => Promise<AuthUpgradeProfileSyncData | null>);
+}
 
 export type IdTokenProvider = () => Promise<string | null | undefined>;
 export type MessageHandler = (data: any) => void;
@@ -48,6 +54,8 @@ export class LLMWebSocketManager {
     reject: (error: Error) => void;
   } | null = null;
   private sdkSessionReady: Promise<SdkAuthConfig> | null = null;
+  /** Last options passed to upgradeAuthIfPossible, used on reconnect. */
+  private lastUpgradeAuthIfPossibleOptions: UpgradeAuthIfPossibleOptions | null = null;
   private config: {
     websocketUrl: string;
     sessionStorageKey: string;
@@ -268,6 +276,9 @@ export class LLMWebSocketManager {
           this.connecting = null;
           this.isAuthenticated = false;
           this.authenticatedUserId = null;
+          this.sdkAuthConfig = null;
+          this.sdkSessionReady = null;
+          this.sdkSessionPromise = null;
 
           // Auto-reconnect on unexpected closures (not normal closure)
           if (event.code !== 1000 && event.code !== 1001 && this.reconnectAttempts < 5) {
@@ -277,8 +288,8 @@ export class LLMWebSocketManager {
             this.reconnectTimeout = setTimeout(() => {
               this.connect()
                 .then(() => {
-                  // Re-authenticate if we had a token
-                  this.upgradeAuthIfPossible();
+                  // Re-authenticate if we had a token, reusing last options
+                  this.upgradeAuthIfPossible(this.lastUpgradeAuthIfPossibleOptions ?? undefined);
                 })
                 .catch((error) => {
                   console.error('[LLMWebSocket] Reconnection failed:', error);
@@ -331,14 +342,17 @@ export class LLMWebSocketManager {
     return this.connecting;
   }
 
-  // Upgrade the connection from anonymous to authenticated
-  // migrate_history: if true, migrates anonymous chat history to the authenticated user (for embedded widget)
-  //                  if false, discards anonymous history (for main app)
-  async upgradeAuth(token: string, migrateHistory: boolean = false): Promise<boolean> {
+  /**
+   * Upgrade the connection from anonymous to authenticated.
+   * Accepts an options object with token, optional migrateHistory, and optional profile-sync data.
+   */
+  async upgradeAuth(options: AuthUpgradeRequest): Promise<boolean> {
     // Prevent concurrent upgrade attempts
     if (this.pendingAuthUpgrade) {
       return this.pendingAuthUpgrade;
     }
+
+    const { token, migrateHistory = false, user_profile, user_address, insurances, dependents } = options;
 
     this.pendingAuthUpgrade = (async () => {
       try {
@@ -359,26 +373,27 @@ export class LLMWebSocketManager {
             unsubscribe();
           };
 
-          const unsubscribe = this.onAuthUpgrade((success, data) => {
+          const unsubscribe = this.onAuthUpgrade((success) => {
             cleanup();
-            if (success) {
-              resolve(true);
-            } else {
-              resolve(false);
-            }
+            resolve(success);
           });
 
-          // Send the auth upgrade message
           const cleanToken = token.startsWith('Bearer ') ? token.substring(7) : token;
-          const upgradePayload = {
+          const upgradePayload: Record<string, unknown> = {
             type: 'auth.upgrade',
             token: cleanToken,
-            migrate_history: migrateHistory
+            migrate_history: migrateHistory,
           };
+          if (user_profile != null) upgradePayload.user_profile = user_profile;
+          if (user_address != null) upgradePayload.user_address = user_address;
+          if (insurances != null) upgradePayload.insurances = insurances;
+          if (dependents != null) upgradePayload.dependents = dependents;
+
           console.log('[LLMWebSocket] Sending auth.upgrade message', {
             tokenLength: cleanToken.length,
             tokenPrefix: cleanToken.substring(0, 20) + '...',
             migrateHistory,
+            hasProfileSync: !!(user_profile ?? user_address ?? insurances ?? dependents),
           });
           socket.send(JSON.stringify(upgradePayload));
         });
@@ -390,9 +405,15 @@ export class LLMWebSocketManager {
     return this.pendingAuthUpgrade;
   }
 
-  // Attempt to upgrade auth if we have a token provider
-  // migrateHistory: defaults to false, set to true for embedded widget
-  async upgradeAuthIfPossible(migrateHistory: boolean = false): Promise<boolean> {
+  /**
+   * Attempt to upgrade auth if we have a token provider.
+   * Fetches token internally and sends optional profile-sync data.
+   */
+  async upgradeAuthIfPossible(options?: UpgradeAuthIfPossibleOptions): Promise<boolean> {
+    const opts = options ?? {};
+    const migrateHistory = opts.migrateHistory ?? false;
+    this.lastUpgradeAuthIfPossibleOptions = opts;
+
     console.log('[LLMWebSocket] upgradeAuthIfPossible called', {
       hasTokenProvider: !!this.tokenProvider,
       migrateHistory,
@@ -405,18 +426,26 @@ export class LLMWebSocketManager {
     }
 
     try {
-      console.log('[LLMWebSocket] Requesting token from provider for auth upgrade');
       const token = await this.tokenProvider();
       if (!token) {
         console.warn('[LLMWebSocket] Token provider returned null/undefined, skipping auth upgrade');
         return false;
       }
 
-      console.log('[LLMWebSocket] Token received, upgrading auth', {
-        tokenLength: token.length,
-        tokenPrefix: token.substring(0, 20) + '...',
-      });
-      const success = await this.upgradeAuth(token, migrateHistory);
+      let profileSync: AuthUpgradeProfileSyncData | null = null;
+      if (opts.profileSync != null) {
+        profileSync = typeof opts.profileSync === 'function'
+          ? await opts.profileSync()
+          : opts.profileSync;
+      }
+
+      const authRequest: AuthUpgradeRequest = {
+        token,
+        migrateHistory,
+        ...(profileSync ?? {}),
+      };
+
+      const success = await this.upgradeAuth(authRequest);
       console.log('[LLMWebSocket] Auth upgrade result:', success);
       return success;
     } catch (error) {

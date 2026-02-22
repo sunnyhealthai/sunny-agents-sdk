@@ -1,6 +1,7 @@
 import { SunnyAgentsClient } from '../client/SunnyAgentsClient';
 import type { PasswordlessAuthManager } from '../client/passwordlessAuth';
 import type {
+  AuthUpgradeProfileSyncData,
   DoctorProfileArtifact,
   ProviderResult,
   ProviderSearchResultsArtifact,
@@ -81,7 +82,10 @@ export interface VanillaChatInstance {
    */
   setAuthType?: (
     authType: SdkAuthType,
-    options?: { idTokenProvider?: () => Promise<string | null> },
+    options?: {
+      idTokenProvider?: () => Promise<string | null>;
+      authUpgradeProfileSync?: AuthUpgradeProfileSyncData | (() => Promise<AuthUpgradeProfileSyncData | null>);
+    },
   ) => Promise<void>;
 }
 
@@ -1307,7 +1311,7 @@ function ensureStyles() {
     --sunny-color-primary: #006fff;
     --sunny-color-secondary: #212124;
     --sunny-color-accent: #22c55e;
-    --sunny-color-background: var(--sunny-color-background);
+    --sunny-color-background: #ffffff;
     --sunny-color-text: #212124;
     --sunny-color-danger: #ef4444;
     --sunny-color-danger-hover: #dc2626;
