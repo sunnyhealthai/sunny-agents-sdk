@@ -156,7 +156,7 @@ async function activateAuthType(
  *
  * Three required parameters: partnerIdentifier, publicKey, authType.
  * All auth configuration (Auth0 domain, client ID, connection, etc.)
- * is fetched from the server via the HTTP POST /sdk/config endpoint.
+ * is fetched from the server via the HTTP GET /sdk/config endpoint.
  * The WebSocket connection is deferred until the user sends a message.
  *
  * @example
