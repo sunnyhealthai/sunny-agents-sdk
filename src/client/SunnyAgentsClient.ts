@@ -467,9 +467,9 @@ export class SunnyAgentsClient {
     const conversationId = data.conversation_id;
 
     if (type === 'conversation.migrated') {
-      const oldId = (raw as any).old_conversation_id || data.old_conversation_id;
-      const newId = (raw as any).new_conversation_id || data.new_conversation_id;
-      const conversationData = (raw as any).conversation || data.conversation;
+      const oldId = data.old_conversation_id;
+      const newId = data.new_conversation_id;
+      const conversationData = data.conversation;
 
       console.log('[SunnyAgentsClient] Received conversation.migrated event:', { oldId, newId });
 
@@ -545,9 +545,9 @@ export class SunnyAgentsClient {
     }
 
     if (type === 'conversation.created') {
-      const createdId = (raw as any).conversation?.id || (raw as any).conversation_id || conversationId;
-      const requestId = (raw as any).request_id ?? (raw as any).conversation?.request_id;
-      const title = (raw as any).conversation?.title ?? (raw as any).conversation?.name ?? (raw as any).title ?? null;
+      const createdId = (data as any).conversation?.id || conversationId;
+      const requestId = (data as any).request_id ?? (data as any).conversation?.request_id;
+      const title = (data as any).conversation?.title ?? (data as any).conversation?.name ?? null;
 
       if (createdId) {
         this.ensureConversation(createdId, title ?? undefined);
@@ -759,13 +759,9 @@ export class SunnyAgentsClient {
     const next = this.conversations.get(ensuredId)!;
     const idx = next.messages.findIndex((m) => m.id === message.id);
     if (idx >= 0) {
-      next.messages = [
-        ...next.messages.slice(0, idx),
-        { ...next.messages[idx], ...message },
-        ...next.messages.slice(idx + 1),
-      ];
+      next.messages[idx] = { ...next.messages[idx], ...message };
     } else {
-      next.messages = [...next.messages, message];
+      next.messages.push(message);
     }
     this.conversations.set(ensuredId, next);
   }
@@ -782,12 +778,7 @@ export class SunnyAgentsClient {
     const next = this.conversations.get(ensuredId)!;
     const idx = next.messages.findIndex((m) => m.id === messageId);
     if (idx === -1) return;
-    const updated = updater(next.messages[idx]);
-    next.messages = [
-      ...next.messages.slice(0, idx),
-      updated,
-      ...next.messages.slice(idx + 1),
-    ];
+    next.messages[idx] = updater(next.messages[idx]);
     this.conversations.set(ensuredId, next);
   }
 
@@ -815,8 +806,8 @@ export class SunnyAgentsClient {
 
   private extractTextFromContent(items?: SunnyAgentMessageItem[], fallback?: string): string {
     if (!items || items.length === 0) return fallback ?? '';
-    const collected: string[] = [];
-    for (const item of items) {
+    for (let i = items.length - 1; i >= 0; i--) {
+      const item = items[i];
       if (!item) continue;
       if (item.type === 'message' || item.type === 'output_message') {
         const fragments = Array.isArray(item.content) ? item.content : [];
@@ -824,13 +815,8 @@ export class SunnyAgentsClient {
           .map((fragment) => (fragment && typeof fragment.text === 'string' ? fragment.text : ''))
           .filter(Boolean)
           .join('');
-        if (text) {
-          collected.push(text);
-        }
+        if (text) return text;
       }
-    }
-    if (collected.length > 0) {
-      return collected[collected.length - 1];
     }
     return fallback ?? '';
   }
@@ -840,11 +826,6 @@ export class SunnyAgentsClient {
     this.listeners.forEach((listener) => {
       try { listener(); } catch { /* ignore listener errors */ }
     });
-  }
-
-  private shouldCreateServerConversations(): boolean {
-    // Check config flag. The actual anonymous check happens in createConversation after connecting.
-    return this.createServerConversations;
   }
 
   private emit<E extends keyof ClientEventMap>(event: E, payload: ClientEventMap[E]) {

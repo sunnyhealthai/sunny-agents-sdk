@@ -7,8 +7,6 @@ export { createSunnyChat } from './createSunnyChat';
 
 // Internal APIs - exported for advanced use cases but not recommended for most users
 /** @internal */
-export { Auth0Provider, type Auth0ProviderConfig, type PopupOptions } from './client/auth0Provider';
-/** @internal */
 export { PasswordlessAuthManager, type PasswordlessAuthConfig, type PasswordlessStartOptions, type PasswordlessVerifyOptions } from './client/passwordlessAuth';
 /** @internal */
 export { LLMWebSocketManager } from './client/llmWebSocket';
