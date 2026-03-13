@@ -178,7 +178,7 @@ export async function createSunnyChat(options: UnifiedSunnyChatOptions): Promise
     partnerName: options.partnerIdentifier,
     publicKey: options.publicKey,
     wsManager,
-    createServerConversations: false,
+    createServerConversations: options.authType === 'tokenExchange',
     authUpgradeProfileSync: options.authUpgradeProfileSync,
   };
 
