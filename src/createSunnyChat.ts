@@ -224,8 +224,11 @@ export async function createSunnyChat(options: UnifiedSunnyChatOptions): Promise
       options.devRoute,
     );
 
-    // Update conversation creation mode based on new auth state
-    instance.client.setCreateServerConversations(wsManager.getIsAuthenticated());
+    // tokenExchange authenticates on first message; we must create conversations on server.
+    // passwordless may start anonymous; use current auth state.
+    instance.client.setCreateServerConversations(
+      newAuthType === 'tokenExchange' || wsManager.getIsAuthenticated(),
+    );
   };
 
   return instance;
