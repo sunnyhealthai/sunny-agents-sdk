@@ -302,20 +302,16 @@ export interface AuthUpgradeRequest extends AuthUpgradeProfileSyncData {
 /**
  * Auth types the developer must choose from.
  * - passwordless: starts unauthenticated, user can verify via email/SMS
- * - saml: triggers SAML auto-login popup on init
- * - oidc: triggers OIDC auto-login popup on init
  * - tokenExchange: uses a partner-provided ID token to authenticate
  */
-export type SdkAuthType = 'passwordless' | 'saml' | 'oidc' | 'tokenExchange';
+export type SdkAuthType = 'passwordless' | 'tokenExchange';
 
 /**
  * Server-provided auth configuration (returned by sdk.session.created).
  * Contains only public fields -- no secrets.
  */
 export interface SdkAuthConfig {
-  auth0_domain?: string;
   auth0_client_id?: string;
-  auth0_connection?: string;
   audience?: string;
   organization?: string;
   token_exchange_url?: string;

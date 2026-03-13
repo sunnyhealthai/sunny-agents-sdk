@@ -22,16 +22,6 @@ export interface LLMWebSocketConfig {
   publicKey?: string;
 }
 
-// Session ID storage is now in-memory only (no localStorage persistence)
-// These functions are kept as no-ops for backward compatibility
-function getStoredSessionId(_storageKey: string): string | null {
-  return null;
-}
-
-function storeSessionId(_storageKey: string, _sessionId: string): void {
-  // No-op: session IDs are stored in-memory only
-}
-
 // Small, dependency-free WebSocket manager shared by the SDK.
 export class LLMWebSocketManager {
   private ws: WebSocket | null = null;
@@ -56,6 +46,8 @@ export class LLMWebSocketManager {
   private sdkSessionReady: Promise<SdkAuthConfig> | null = null;
   /** Last options passed to upgradeAuthIfPossible, used on reconnect. */
   private lastUpgradeAuthIfPossibleOptions: UpgradeAuthIfPossibleOptions | null = null;
+  /** Timeout handle for SDK session creation, so it can be cleared on close/reconnect. */
+  private sdkSessionTimeout: ReturnType<typeof setTimeout> | null = null;
   private config: {
     websocketUrl: string;
     sessionStorageKey: string;
@@ -86,31 +78,25 @@ export class LLMWebSocketManager {
           tokenExchangeUrl: this.config.tokenExchange.tokenExchangeUrl,
         },
       });
-      this.tokenExchangeManager = new TokenExchangeManager(
-        this.config.idTokenProvider,
-        this.config.tokenExchange
-      );
-      // Set token provider to use token exchange
-      this.tokenProvider = async () => {
-        try {
-          console.log('[LLMWebSocket] Token provider called, requesting access token via token exchange');
-          const accessToken = await this.tokenExchangeManager!.getAccessToken();
-          console.log('[LLMWebSocket] Token exchange returned access token', {
-            hasToken: !!accessToken,
-            tokenLength: accessToken?.length || 0,
-          });
-          return accessToken;
-        } catch (error) {
-          console.error('[LLMWebSocket] Token exchange failed:', error);
-          return null;
-        }
-      };
+      this.applyTokenExchange(this.config.idTokenProvider, this.config.tokenExchange);
     } else {
       console.log('[LLMWebSocket] Token exchange not initialized', {
         hasIdTokenProvider: !!this.config.idTokenProvider,
         hasTokenExchange: !!this.config.tokenExchange,
       });
     }
+  }
+
+  private applyTokenExchange(idTokenProvider: IdTokenProvider, tokenExchange: TokenExchangeConfig): void {
+    this.tokenExchangeManager = new TokenExchangeManager(idTokenProvider, tokenExchange);
+    this.tokenProvider = async () => {
+      try {
+        return await this.tokenExchangeManager!.getAccessToken();
+      } catch (error) {
+        console.error('[LLMWebSocket] Token exchange failed:', error);
+        return null;
+      }
+    };
   }
 
   setTokenProvider(provider: TokenProvider) {
@@ -120,19 +106,7 @@ export class LLMWebSocketManager {
   setIdTokenProvider(provider: IdTokenProvider) {
     this.config.idTokenProvider = provider;
     if (this.config.idTokenProvider && this.config.tokenExchange) {
-      this.tokenExchangeManager = new TokenExchangeManager(
-        this.config.idTokenProvider,
-        this.config.tokenExchange
-      );
-      // Set token provider to use token exchange
-      this.tokenProvider = async () => {
-        try {
-          return await this.tokenExchangeManager!.getAccessToken();
-        } catch (error) {
-          console.error('Token exchange failed:', error);
-          return null;
-        }
-      };
+      this.applyTokenExchange(this.config.idTokenProvider, this.config.tokenExchange);
     } else {
       this.tokenExchangeManager = null;
       this.tokenProvider = undefined;
@@ -235,6 +209,10 @@ export class LLMWebSocketManager {
               const config: SdkAuthConfig = data.config ?? {};
               this.sdkAuthConfig = config;
               console.log('[LLMWebSocket] SDK session created', { partner_id: data.partner_id, config });
+              if (this.sdkSessionTimeout) {
+                clearTimeout(this.sdkSessionTimeout);
+                this.sdkSessionTimeout = null;
+              }
               if (this.sdkSessionPromise) {
                 this.sdkSessionPromise.resolve(config);
                 this.sdkSessionPromise = null;
@@ -244,6 +222,10 @@ export class LLMWebSocketManager {
             else if (data.type === 'sdk.session.create_failed') {
               const error = new Error(`SDK session creation failed: ${data.error} (${data.code})`);
               console.error('[LLMWebSocket] SDK session creation failed:', data.error, data.code);
+              if (this.sdkSessionTimeout) {
+                clearTimeout(this.sdkSessionTimeout);
+                this.sdkSessionTimeout = null;
+              }
               if (this.sdkSessionPromise) {
                 this.sdkSessionPromise.reject(error);
                 this.sdkSessionPromise = null;
@@ -279,6 +261,10 @@ export class LLMWebSocketManager {
           this.sdkAuthConfig = null;
           this.sdkSessionReady = null;
           this.sdkSessionPromise = null;
+          if (this.sdkSessionTimeout) {
+            clearTimeout(this.sdkSessionTimeout);
+            this.sdkSessionTimeout = null;
+          }
 
           // Auto-reconnect on unexpected closures (not normal closure)
           if (event.code !== 1000 && event.code !== 1001 && this.reconnectAttempts < 5) {
@@ -508,10 +494,11 @@ export class LLMWebSocketManager {
       this.sdkSessionPromise = { resolve, reject };
 
       // Timeout after 15 seconds
-      setTimeout(() => {
+      this.sdkSessionTimeout = setTimeout(() => {
         if (this.sdkSessionPromise) {
           this.sdkSessionPromise.reject(new Error('SDK session creation timed out after 15 seconds'));
           this.sdkSessionPromise = null;
+          this.sdkSessionTimeout = null;
         }
       }, 15000);
     });
@@ -533,15 +520,7 @@ export class LLMWebSocketManager {
   configureTokenExchange(idTokenProvider: IdTokenProvider, tokenExchangeConfig: TokenExchangeConfig): void {
     this.config.idTokenProvider = idTokenProvider;
     this.config.tokenExchange = tokenExchangeConfig;
-    this.tokenExchangeManager = new TokenExchangeManager(idTokenProvider, tokenExchangeConfig);
-    this.tokenProvider = async () => {
-      try {
-        return await this.tokenExchangeManager!.getAccessToken();
-      } catch (error) {
-        console.error('[LLMWebSocket] Token exchange failed:', error);
-        return null;
-      }
-    };
+    this.applyTokenExchange(idTokenProvider, tokenExchangeConfig);
   }
 
   close(): void {
@@ -551,6 +530,12 @@ export class LLMWebSocketManager {
     this.isAuthenticated = false;
     this.authenticatedUserId = null;
     // Note: Keep currentSessionId for reconnection - only clear on explicit reset
+
+    // Clear any pending SDK session timeout
+    if (this.sdkSessionTimeout) {
+      clearTimeout(this.sdkSessionTimeout);
+      this.sdkSessionTimeout = null;
+    }
 
     // Clear any pending reconnect timeout
     if (this.reconnectTimeout) {

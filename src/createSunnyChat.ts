@@ -1,16 +1,12 @@
-import { Auth0Provider } from './client/auth0Provider';
 import { LLMWebSocketManager } from './client/llmWebSocket';
 import { PasswordlessAuthManager } from './client/passwordlessAuth';
 import { attachSunnyChat, type VanillaChatInstance } from './ui/vanillaChat';
 import type {
-  AuthUpgradeProfileSyncData,
   SdkAuthConfig,
   SdkAuthType,
   SunnyAgentsConfig,
   UnifiedSunnyChatOptions,
 } from './types';
-
-type ProfileSyncInput = AuthUpgradeProfileSyncData | (() => Promise<AuthUpgradeProfileSyncData | null>);
 
 /**
  * Fetch SDK configuration from the dedicated HTTP endpoint.
@@ -61,7 +57,6 @@ async function activateAuthType(
   partnerIdentifier: string,
   idTokenProvider?: () => Promise<string | null>,
   devRoute?: string,
-  authUpgradeProfileSync?: ProfileSyncInput,
 ): Promise<{ passwordlessAuth?: PasswordlessAuthManager }> {
   switch (authType) {
     case 'passwordless': {
@@ -72,61 +67,6 @@ async function activateAuthType(
         storageType: 'sessionStorage',
       });
       return { passwordlessAuth };
-    }
-
-    case 'saml':
-    case 'oidc': {
-      // Create Auth0Provider with server-provided config and trigger auth popup
-      if (!serverConfig.auth0_domain || !serverConfig.auth0_client_id) {
-        console.warn(`[createSunnyChat] Server config missing auth0_domain or auth0_client_id for ${authType} auth`);
-        return {};
-      }
-
-      const redirectUri = `${window.location.origin}${window.location.pathname.replace(/\/[^/]*$/, '')}/callback.html`;
-      const auth0Provider = new Auth0Provider({
-        domain: serverConfig.auth0_domain,
-        clientId: serverConfig.auth0_client_id,
-        redirectUri,
-        connection: serverConfig.auth0_connection,
-        organization: serverConfig.organization,
-        audience: serverConfig.audience,
-        usePopup: true,
-        useModal: true,
-        storageType: 'sessionStorage',
-        storageKey: 'auth0_saml_tokens',
-      });
-
-      // Handle callback if returning from redirect
-      if (window.location.search.includes('code=') || window.location.hash.includes('access_token')) {
-        try {
-          await auth0Provider.handleCallback();
-          window.history.replaceState({}, document.title, window.location.pathname);
-        } catch (error) {
-          console.warn('[createSunnyChat] Failed to handle Auth0 callback:', error);
-        }
-      }
-
-      // Try to authenticate automatically
-      if (!auth0Provider.isAuthenticated()) {
-        try {
-          await auth0Provider.checkSession();
-        } catch {
-          try {
-            await auth0Provider.authorizePopup();
-          } catch (popupError) {
-            console.warn(`[createSunnyChat] Auth0 ${authType} authentication failed:`, popupError);
-          }
-        }
-      }
-
-      // Store the ID token for deferred auth upgrade (happens on first message)
-      if (auth0Provider.isAuthenticated()) {
-        const idToken = auth0Provider.getIdToken();
-        if (idToken) {
-          wsManager.setTokenProvider(async () => idToken);
-        }
-      }
-      return {};
     }
 
     case 'tokenExchange': {
@@ -172,17 +112,6 @@ async function activateAuthType(
  *
  * @example
  * ```ts
- * // SAML (triggers auto-login popup)
- * const chat = await createSunnyChat({
- *   container: document.getElementById('chat'),
- *   partnerIdentifier: 'acme-health',
- *   publicKey: 'pk-sunnyagents_abc_xyz',
- *   authType: 'saml',
- * });
- * ```
- *
- * @example
- * ```ts
  * // Token exchange
  * const chat = await createSunnyChat({
  *   container: document.getElementById('chat'),
@@ -196,7 +125,7 @@ async function activateAuthType(
  * @example
  * ```ts
  * // Switch auth type at runtime
- * chat.setAuthType('saml');
+ * chat.setAuthType('tokenExchange');
  * ```
  */
 export async function createSunnyChat(options: UnifiedSunnyChatOptions): Promise<VanillaChatInstance> {
@@ -208,9 +137,9 @@ export async function createSunnyChat(options: UnifiedSunnyChatOptions): Promise
     throw new Error('[createSunnyChat] publicKey is required');
   }
   if (!options.authType) {
-    throw new Error('[createSunnyChat] authType is required (one of: passwordless, saml, oidc, tokenExchange)');
+    throw new Error('[createSunnyChat] authType is required (one of: passwordless, tokenExchange)');
   }
-  const validAuthTypes: SdkAuthType[] = ['passwordless', 'saml', 'oidc', 'tokenExchange'];
+  const validAuthTypes: SdkAuthType[] = ['passwordless', 'tokenExchange'];
   if (!validAuthTypes.includes(options.authType)) {
     throw new Error(`[createSunnyChat] Invalid authType "${options.authType}". Must be one of: ${validAuthTypes.join(', ')}`);
   }
@@ -241,7 +170,6 @@ export async function createSunnyChat(options: UnifiedSunnyChatOptions): Promise
     options.partnerIdentifier,
     options.idTokenProvider,
     options.devRoute,
-    options.authUpgradeProfileSync,
   );
 
   // --- Build SunnyAgentsConfig for the chat client ---
@@ -274,7 +202,6 @@ export async function createSunnyChat(options: UnifiedSunnyChatOptions): Promise
       authType: SdkAuthType,
       opts?: {
         idTokenProvider?: () => Promise<string | null>;
-        authUpgradeProfileSync?: ProfileSyncInput;
       },
     ) => Promise<void>;
   };
@@ -283,7 +210,6 @@ export async function createSunnyChat(options: UnifiedSunnyChatOptions): Promise
     newAuthType: SdkAuthType,
     opts?: {
       idTokenProvider?: () => Promise<string | null>;
-      authUpgradeProfileSync?: ProfileSyncInput;
     },
   ) => {
     if (newAuthType === 'tokenExchange' && !opts?.idTokenProvider && !options.idTokenProvider) {
@@ -296,7 +222,6 @@ export async function createSunnyChat(options: UnifiedSunnyChatOptions): Promise
       options.partnerIdentifier,
       opts?.idTokenProvider ?? options.idTokenProvider,
       options.devRoute,
-      opts?.authUpgradeProfileSync ?? options.authUpgradeProfileSync,
     );
 
     // Update conversation creation mode based on new auth state
