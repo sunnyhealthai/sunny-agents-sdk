@@ -48,6 +48,8 @@ export class LLMWebSocketManager {
   private lastUpgradeAuthIfPossibleOptions: UpgradeAuthIfPossibleOptions | null = null;
   /** Timeout handle for SDK session creation, so it can be cleared on close/reconnect. */
   private sdkSessionTimeout: ReturnType<typeof setTimeout> | null = null;
+  /** The last token used for auth upgrade/refresh, used to check expiry before sends. */
+  private lastAuthToken: string | null = null;
   private config: {
     websocketUrl: string;
     sessionStorageKey: string;
@@ -130,6 +132,7 @@ export class LLMWebSocketManager {
   }
 
   async send(payload: any): Promise<void> {
+    await this.refreshAuthTokenIfNeeded();
     const socket = await this.connect();
     // Handle BigInt serialization by converting to numbers
     const serializedPayload = JSON.stringify(payload, (_key, value) =>
@@ -243,6 +246,12 @@ export class LLMWebSocketManager {
                 try { handler(false, { error: data.error, code: data.code }); } catch { }
               });
             }
+            // Handle token refresh responses
+            else if (data.type === 'auth.refreshed') {
+              console.log('[LLMWebSocket] Token refresh successful');
+            } else if (data.type === 'auth.refresh_failed') {
+              console.error('[LLMWebSocket] Token refresh failed:', data);
+            }
 
             // Forward all messages to listeners
             this.listeners.forEach((listener) => {
@@ -261,6 +270,7 @@ export class LLMWebSocketManager {
           this.sdkAuthConfig = null;
           this.sdkSessionReady = null;
           this.sdkSessionPromise = null;
+          this.lastAuthToken = null;
           if (this.sdkSessionTimeout) {
             clearTimeout(this.sdkSessionTimeout);
             this.sdkSessionTimeout = null;
@@ -365,6 +375,7 @@ export class LLMWebSocketManager {
           });
 
           const cleanToken = token.startsWith('Bearer ') ? token.substring(7) : token;
+          this.lastAuthToken = cleanToken;
           const upgradePayload: Record<string, unknown> = {
             type: 'auth.upgrade',
             token: cleanToken,
@@ -474,6 +485,83 @@ export class LLMWebSocketManager {
   }
 
   /**
+   * Refresh the auth token for an authenticated WebSocket session.
+   * Sends an auth.refresh message with the new token (fire-and-forget).
+   */
+  async refreshToken(token: string): Promise<void> {
+    const socket = await this.connect();
+    const cleanToken = token.startsWith('Bearer ') ? token.substring(7) : token;
+    this.lastAuthToken = cleanToken;
+    socket.send(JSON.stringify({
+      type: 'auth.refresh',
+      token: cleanToken,
+    }));
+  }
+
+  /**
+   * Refresh token and wait for auth.refreshed or auth.refresh_failed response.
+   * Resolves on success, rejects on failure or after timeoutMs.
+   */
+  async refreshTokenAndWait(token: string, timeoutMs: number = 5000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        unsubscribe();
+        reject(new Error('Token refresh timed out'));
+      }, timeoutMs);
+
+      const unsubscribe = this.onMessage((data) => {
+        if (data.type === 'auth.refreshed') {
+          clearTimeout(timeoutId);
+          unsubscribe();
+          resolve();
+        } else if (data.type === 'auth.refresh_failed') {
+          clearTimeout(timeoutId);
+          unsubscribe();
+          reject(new Error(data.error || 'Token refresh failed'));
+        }
+      });
+
+      this.refreshToken(token).catch((err) => {
+        clearTimeout(timeoutId);
+        unsubscribe();
+        reject(err);
+      });
+    });
+  }
+
+  /** Parse JWT exp claim to get token expiry time in milliseconds. */
+  private getTokenExpiry(token: string): number | null {
+    try {
+      const parts = token.split('.');
+      if (parts.length !== 3) return null;
+      // Handle URL-safe base64 encoding used by JWTs
+      const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+      const payload = JSON.parse(atob(base64));
+      return payload.exp ? payload.exp * 1000 : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Check if the auth token is near expiry and refresh it before sending. */
+  private async refreshAuthTokenIfNeeded(): Promise<void> {
+    if (!this.isAuthenticated || !this.tokenProvider || !this.lastAuthToken) return;
+
+    const REFRESH_BUFFER_MS = 5 * 60 * 1000; // 5 minutes before expiry
+    const exp = this.getTokenExpiry(this.lastAuthToken);
+    if (!exp || exp - Date.now() > REFRESH_BUFFER_MS) return;
+
+    try {
+      const freshToken = await this.getAccessToken();
+      if (freshToken) {
+        await this.refreshToken(freshToken);
+      }
+    } catch (error) {
+      console.error('[LLMWebSocket] Auth token refresh before send failed:', error);
+    }
+  }
+
+  /**
    * Waits for the SDK session to be created (sdk.session.created response).
    * Must be called after connect() when publicKey is configured.
    * Returns the server-provided SdkAuthConfig.
@@ -530,6 +618,7 @@ export class LLMWebSocketManager {
     this.isAuthenticated = false;
     this.authenticatedUserId = null;
     // Note: Keep currentSessionId for reconnection - only clear on explicit reset
+    this.lastAuthToken = null;
 
     // Clear any pending SDK session timeout
     if (this.sdkSessionTimeout) {
