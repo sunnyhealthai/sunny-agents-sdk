@@ -1754,6 +1754,7 @@ function ensureStyles() {
     flex-direction: column;
     gap: 16px;
     background: var(--sunny-color-background);
+    touch-action: pan-y;
   }
   .sunny-chat__messages::-webkit-scrollbar {
     width: 6px;
