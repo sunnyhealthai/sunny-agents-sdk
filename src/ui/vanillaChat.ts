@@ -494,9 +494,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       document.body.style.overflow = 'hidden';
     } else {
       // Reset any keyboard height adjustment
-      modal.style.height = '';
-      modal.style.maxHeight = '';
-      modalBackdrop.style.alignItems = '';
+      resetKeyboardAdjustment();
       // Restore body scroll
       document.body.style.overflow = '';
       // Set closing flag to prevent immediate reopen when focus returns to trigger
@@ -510,26 +508,29 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
 
   const isMobileQuery = window.matchMedia('(max-width: 640px)');
 
+  const resetKeyboardAdjustment = () => {
+    modalBackdrop.style.height = '';
+    modalBackdrop.style.top = '';
+    modalBackdrop.style.bottom = '';
+  };
+
   const adjustForKeyboard = () => {
     const vv = window.visualViewport;
     if (!vv || !isExpanded || !isMobileQuery.matches) {
-      modal.style.height = '';
-      modal.style.maxHeight = '';
-      modalBackdrop.style.alignItems = '';
+      resetKeyboardAdjustment();
       return;
     }
     // Only apply when keyboard is actually open (significant height difference)
     const keyboardOpen = window.innerHeight - vv.height > 100;
     if (!keyboardOpen) {
-      modal.style.height = '';
-      modal.style.maxHeight = '';
-      modalBackdrop.style.alignItems = '';
+      resetKeyboardAdjustment();
       return;
     }
-    modal.style.height = `${vv.height}px`;
-    modal.style.maxHeight = `${vv.height}px`;
-    // Pin modal to top so it doesn't center with gaps above/below
-    modalBackdrop.style.alignItems = 'flex-start';
+    // Resize and reposition the backdrop to match the visual viewport;
+    // the modal inside fills it via height: 100% from CSS
+    modalBackdrop.style.height = `${vv.height}px`;
+    modalBackdrop.style.top = `${vv.offsetTop}px`;
+    modalBackdrop.style.bottom = 'auto';
   };
 
   const handleMobileInputFocus = () => {
@@ -2542,7 +2543,6 @@ function ensureStyles() {
       height: 100%;
       max-height: 100%;
       border-radius: 0;
-      transition: height 0.15s ease-out, max-height 0.15s ease-out;
     }
     .sunny-chat__trigger {
       max-width: 100%;
