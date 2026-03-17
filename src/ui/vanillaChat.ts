@@ -504,38 +504,6 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     }
   };
 
-  const isMobileQuery = window.matchMedia('(max-width: 640px)');
-
-  const resetKeyboardAdjustment = () => {
-    modalBackdrop.style.height = '';
-    modalBackdrop.style.top = '';
-    modalBackdrop.style.bottom = '';
-  };
-
-  const adjustForKeyboard = () => {
-    const vv = window.visualViewport;
-    if (!vv || !isExpanded || !isMobileQuery.matches) {
-      resetKeyboardAdjustment();
-      return;
-    }
-    // Only apply when keyboard is actually open (significant height difference)
-    const keyboardOpen = window.innerHeight - vv.height > 100;
-    if (!keyboardOpen) {
-      resetKeyboardAdjustment();
-      return;
-    }
-    // Resize and reposition the backdrop to match the visual viewport;
-    // the modal inside fills it via height: 100% from CSS
-    modalBackdrop.style.height = `${vv.height}px`;
-    modalBackdrop.style.top = `${vv.offsetTop}px`;
-    modalBackdrop.style.bottom = 'auto';
-  };
-
-  const handleMobileInputBlur = () => {
-    if (!isMobileQuery.matches) return;
-    resetKeyboardAdjustment();
-  };
-
   const closeModal = () => {
     setExpanded(false);
   };
@@ -1591,10 +1559,6 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     }),
   );
 
-  // Mobile keyboard handling: adjust modal height when virtual keyboard opens
-  window.visualViewport?.addEventListener('resize', adjustForKeyboard);
-  modalInput.addEventListener('blur', handleMobileInputBlur);
-
   // Kick off render without forcing conversation creation; expand once messages exist
   render();
 
@@ -1610,9 +1574,6 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     // Clean up trigger event listeners
     triggerInput.removeEventListener('keydown', handleTriggerKeyDown);
     triggerSendBtn.removeEventListener('click', handleTriggerSendClick);
-    // Clean up mobile keyboard listeners
-    window.visualViewport?.removeEventListener('resize', adjustForKeyboard);
-    modalInput.removeEventListener('blur', handleMobileInputBlur);
     // Clean up document event listeners
     document.removeEventListener('keydown', handleEscapeKey);
     // Restore body scroll
