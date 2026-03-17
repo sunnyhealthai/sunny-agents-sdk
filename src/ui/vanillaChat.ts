@@ -493,8 +493,6 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       // Prevent body scroll when modal is open
       document.body.style.overflow = 'hidden';
     } else {
-      // Reset any keyboard height adjustment
-      resetKeyboardAdjustment();
       // Restore body scroll
       document.body.style.overflow = '';
       // Set closing flag to prevent immediate reopen when focus returns to trigger
@@ -533,11 +531,9 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     modalBackdrop.style.bottom = 'auto';
   };
 
-  const handleMobileInputFocus = () => {
+  const handleMobileInputBlur = () => {
     if (!isMobileQuery.matches) return;
-    setTimeout(() => {
-      modalInput.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    }, 300);
+    resetKeyboardAdjustment();
   };
 
   const closeModal = () => {
@@ -1597,8 +1593,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
 
   // Mobile keyboard handling: adjust modal height when virtual keyboard opens
   window.visualViewport?.addEventListener('resize', adjustForKeyboard);
-  window.visualViewport?.addEventListener('scroll', adjustForKeyboard);
-  modalInput.addEventListener('focus', handleMobileInputFocus);
+  modalInput.addEventListener('blur', handleMobileInputBlur);
 
   // Kick off render without forcing conversation creation; expand once messages exist
   render();
@@ -1617,8 +1612,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     triggerSendBtn.removeEventListener('click', handleTriggerSendClick);
     // Clean up mobile keyboard listeners
     window.visualViewport?.removeEventListener('resize', adjustForKeyboard);
-    window.visualViewport?.removeEventListener('scroll', adjustForKeyboard);
-    modalInput.removeEventListener('focus', handleMobileInputFocus);
+    modalInput.removeEventListener('blur', handleMobileInputBlur);
     // Clean up document event listeners
     document.removeEventListener('keydown', handleEscapeKey);
     // Restore body scroll
