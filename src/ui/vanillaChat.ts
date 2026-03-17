@@ -496,6 +496,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       // Reset any keyboard height adjustment
       modal.style.height = '';
       modal.style.maxHeight = '';
+      modalBackdrop.style.alignItems = '';
       // Restore body scroll
       document.body.style.overflow = '';
       // Set closing flag to prevent immediate reopen when focus returns to trigger
@@ -514,10 +515,21 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     if (!vv || !isExpanded || !isMobileQuery.matches) {
       modal.style.height = '';
       modal.style.maxHeight = '';
+      modalBackdrop.style.alignItems = '';
+      return;
+    }
+    // Only apply when keyboard is actually open (significant height difference)
+    const keyboardOpen = window.innerHeight - vv.height > 100;
+    if (!keyboardOpen) {
+      modal.style.height = '';
+      modal.style.maxHeight = '';
+      modalBackdrop.style.alignItems = '';
       return;
     }
     modal.style.height = `${vv.height}px`;
     modal.style.maxHeight = `${vv.height}px`;
+    // Pin modal to top so it doesn't center with gaps above/below
+    modalBackdrop.style.alignItems = 'flex-start';
   };
 
   const handleMobileInputFocus = () => {
