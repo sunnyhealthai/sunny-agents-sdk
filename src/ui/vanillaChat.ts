@@ -495,6 +495,10 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     } else {
       // Restore body scroll
       document.body.style.overflow = '';
+      // Clear any keyboard-related inline styles
+      modal.style.height = '';
+      modal.style.maxHeight = '';
+      modal.style.transform = '';
       // Set closing flag to prevent immediate reopen when focus returns to trigger
       isClosing = true;
       triggerInput.blur();
@@ -1544,6 +1548,34 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   };
   document.addEventListener('keydown', handleEscapeKey);
 
+  // Mobile virtual keyboard handling via Visual Viewport API
+  let keyboardRAF = 0;
+  const handleViewportResize = () => {
+    cancelAnimationFrame(keyboardRAF);
+    keyboardRAF = requestAnimationFrame(() => {
+      const vv = window.visualViewport!;
+      modal.style.height = `${vv.height}px`;
+      modal.style.maxHeight = `${vv.height}px`;
+
+      // On iOS Safari, the visual viewport can scroll relative to the
+      // layout viewport when the keyboard opens.
+      if (vv.offsetTop > 0) {
+        modal.style.transform = `translateY(${vv.offsetTop}px)`;
+      } else {
+        modal.style.transform = '';
+      }
+
+      if (isExpanded) {
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
+    });
+  };
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', handleViewportResize);
+    window.visualViewport.addEventListener('scroll', handleViewportResize);
+  }
+
   // Subscribe to client events for live updates.
   unsubscribes.push(
     client.on('snapshot', (snap) => render(snap)),
@@ -1576,6 +1608,12 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     triggerSendBtn.removeEventListener('click', handleTriggerSendClick);
     // Clean up document event listeners
     document.removeEventListener('keydown', handleEscapeKey);
+    // Clean up virtual keyboard handling
+    cancelAnimationFrame(keyboardRAF);
+    if (window.visualViewport) {
+      window.visualViewport.removeEventListener('resize', handleViewportResize);
+      window.visualViewport.removeEventListener('scroll', handleViewportResize);
+    }
     // Restore body scroll
     document.body.style.overflow = '';
     if (root.parentElement === container) {
@@ -2497,6 +2535,8 @@ function ensureStyles() {
       max-width: 100%;
       height: 100%;
       max-height: 100%;
+      height: 100dvh;
+      max-height: 100dvh;
       border-radius: 0;
     }
     .sunny-chat__trigger {
