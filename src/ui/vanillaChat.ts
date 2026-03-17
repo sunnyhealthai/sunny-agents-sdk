@@ -493,6 +493,9 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       // Prevent body scroll when modal is open
       document.body.style.overflow = 'hidden';
     } else {
+      // Reset any keyboard height adjustment
+      modal.style.height = '';
+      modal.style.maxHeight = '';
       // Restore body scroll
       document.body.style.overflow = '';
       // Set closing flag to prevent immediate reopen when focus returns to trigger
@@ -502,6 +505,26 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
         isClosing = false;
       });
     }
+  };
+
+  const isMobileQuery = window.matchMedia('(max-width: 640px)');
+
+  const adjustForKeyboard = () => {
+    const vv = window.visualViewport;
+    if (!vv || !isExpanded || !isMobileQuery.matches) {
+      modal.style.height = '';
+      modal.style.maxHeight = '';
+      return;
+    }
+    modal.style.height = `${vv.height}px`;
+    modal.style.maxHeight = `${vv.height}px`;
+  };
+
+  const handleMobileInputFocus = () => {
+    if (!isMobileQuery.matches) return;
+    setTimeout(() => {
+      modalInput.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }, 300);
   };
 
   const closeModal = () => {
@@ -1559,6 +1582,11 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     }),
   );
 
+  // Mobile keyboard handling: adjust modal height when virtual keyboard opens
+  window.visualViewport?.addEventListener('resize', adjustForKeyboard);
+  window.visualViewport?.addEventListener('scroll', adjustForKeyboard);
+  modalInput.addEventListener('focus', handleMobileInputFocus);
+
   // Kick off render without forcing conversation creation; expand once messages exist
   render();
 
@@ -1574,6 +1602,10 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     // Clean up trigger event listeners
     triggerInput.removeEventListener('keydown', handleTriggerKeyDown);
     triggerSendBtn.removeEventListener('click', handleTriggerSendClick);
+    // Clean up mobile keyboard listeners
+    window.visualViewport?.removeEventListener('resize', adjustForKeyboard);
+    window.visualViewport?.removeEventListener('scroll', adjustForKeyboard);
+    modalInput.removeEventListener('focus', handleMobileInputFocus);
     // Clean up document event listeners
     document.removeEventListener('keydown', handleEscapeKey);
     // Restore body scroll
@@ -2498,6 +2530,7 @@ function ensureStyles() {
       height: 100%;
       max-height: 100%;
       border-radius: 0;
+      transition: height 0.15s ease-out, max-height 0.15s ease-out;
     }
     .sunny-chat__trigger {
       max-width: 100%;
