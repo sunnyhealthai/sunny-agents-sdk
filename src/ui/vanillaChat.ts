@@ -1550,26 +1550,76 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   document.addEventListener('keydown', handleEscapeKey);
 
   // Mobile virtual keyboard handling via Visual Viewport API.
-  // Keep the backdrop full-screen (avoids flicker of page content behind it).
-  // Instead, top-align the modal and size it to the visual viewport so the
-  // composer stays above the keyboard.
-  const handleViewportResize = () => {
-    const vv = window.visualViewport!;
-    // Top-align so the modal doesn't get centered behind the keyboard
+  // iOS Safari only fires visualViewport resize AFTER the keyboard animation
+  // completes (~300-500ms), causing visible lag. To get smooth, frame-accurate
+  // resizing we poll visualViewport.height with rAF while an input has focus,
+  // then stop polling once the viewport stabilises or the input blurs.
+  let vkPollId = 0;
+  let lastVVHeight = 0;
+  let vkStableFrames = 0;
+
+  const applyViewportSize = () => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const h = Math.round(vv.height);
+    if (h === lastVVHeight) return false; // no change
+    lastVVHeight = h;
     modalBackdrop.style.alignItems = 'flex-start';
-    modal.style.height = `${vv.height}px`;
-    modal.style.maxHeight = `${vv.height}px`;
+    modal.style.height = `${h}px`;
+    modal.style.maxHeight = `${h}px`;
     if (vv.offsetTop > 0) {
       modal.style.marginTop = `${vv.offsetTop}px`;
     } else {
       modal.style.marginTop = '';
     }
-
     if (isExpanded) {
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
+    return true; // changed
   };
 
+  const pollViewport = () => {
+    const changed = applyViewportSize();
+    // Stop polling after 20 consecutive unchanged frames (~330ms of stability)
+    vkStableFrames = changed ? 0 : vkStableFrames + 1;
+    if (vkStableFrames < 20) {
+      vkPollId = requestAnimationFrame(pollViewport);
+    } else {
+      vkPollId = 0;
+    }
+  };
+
+  const startVKPolling = () => {
+    vkStableFrames = 0;
+    if (!vkPollId) {
+      vkPollId = requestAnimationFrame(pollViewport);
+    }
+  };
+
+  const stopVKPolling = () => {
+    if (vkPollId) {
+      cancelAnimationFrame(vkPollId);
+      vkPollId = 0;
+    }
+  };
+
+  // Start polling whenever an input inside the modal receives focus
+  const handleModalFocusIn = () => { if (window.visualViewport) startVKPolling(); };
+  const handleModalFocusOut = () => {
+    // Brief delay — focus may move between inputs within the modal
+    setTimeout(() => {
+      if (!modal.contains(document.activeElement)) {
+        stopVKPolling();
+        // Reset styles when keyboard fully closes
+        applyViewportSize();
+      }
+    }, 100);
+  };
+  modal.addEventListener('focusin', handleModalFocusIn);
+  modal.addEventListener('focusout', handleModalFocusOut);
+
+  // Also listen to visualViewport resize as a fallback for non-focus-driven changes
+  const handleViewportResize = () => { startVKPolling(); };
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', handleViewportResize);
     window.visualViewport.addEventListener('scroll', handleViewportResize);
@@ -1608,6 +1658,9 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     // Clean up document event listeners
     document.removeEventListener('keydown', handleEscapeKey);
     // Clean up virtual keyboard handling
+    stopVKPolling();
+    modal.removeEventListener('focusin', handleModalFocusIn);
+    modal.removeEventListener('focusout', handleModalFocusOut);
     if (window.visualViewport) {
       window.visualViewport.removeEventListener('resize', handleViewportResize);
       window.visualViewport.removeEventListener('scroll', handleViewportResize);
