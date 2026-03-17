@@ -495,10 +495,10 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     } else {
       // Restore body scroll
       document.body.style.overflow = '';
-      // Clear any keyboard-related inline styles
-      modal.style.height = '';
-      modal.style.maxHeight = '';
-      modal.style.transform = '';
+      // Clear any keyboard-related inline styles on backdrop
+      modalBackdrop.style.height = '';
+      modalBackdrop.style.top = '';
+      modalBackdrop.style.bottom = '';
       // Set closing flag to prevent immediate reopen when focus returns to trigger
       isClosing = true;
       triggerInput.blur();
@@ -1554,16 +1554,12 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     cancelAnimationFrame(keyboardRAF);
     keyboardRAF = requestAnimationFrame(() => {
       const vv = window.visualViewport!;
-      modal.style.height = `${vv.height}px`;
-      modal.style.maxHeight = `${vv.height}px`;
-
-      // On iOS Safari, the visual viewport can scroll relative to the
-      // layout viewport when the keyboard opens.
-      if (vv.offsetTop > 0) {
-        modal.style.transform = `translateY(${vv.offsetTop}px)`;
-      } else {
-        modal.style.transform = '';
-      }
+      // Adjust the backdrop (not the modal) to fit the visual viewport.
+      // The backdrop uses `inset: 0` which stretches it via top+bottom.
+      // Setting bottom: auto breaks that stretch so height takes effect.
+      modalBackdrop.style.height = `${vv.height}px`;
+      modalBackdrop.style.top = `${vv.offsetTop}px`;
+      modalBackdrop.style.bottom = 'auto';
 
       if (isExpanded) {
         messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -2535,8 +2531,6 @@ function ensureStyles() {
       max-width: 100%;
       height: 100%;
       max-height: 100%;
-      height: 100dvh;
-      max-height: 100dvh;
       border-radius: 0;
     }
     .sunny-chat__trigger {
