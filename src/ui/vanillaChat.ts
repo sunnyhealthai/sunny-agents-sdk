@@ -495,10 +495,11 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     } else {
       // Restore body scroll
       document.body.style.overflow = '';
-      // Clear any keyboard-related inline styles on backdrop
-      modalBackdrop.style.height = '';
-      modalBackdrop.style.top = '';
-      modalBackdrop.style.bottom = '';
+      // Clear any keyboard-related inline styles
+      modalBackdrop.style.alignItems = '';
+      modal.style.height = '';
+      modal.style.maxHeight = '';
+      modal.style.marginTop = '';
       // Set closing flag to prevent immediate reopen when focus returns to trigger
       isClosing = true;
       triggerInput.blur();
@@ -1548,23 +1549,25 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   };
   document.addEventListener('keydown', handleEscapeKey);
 
-  // Mobile virtual keyboard handling via Visual Viewport API
-  let keyboardRAF = 0;
+  // Mobile virtual keyboard handling via Visual Viewport API.
+  // Keep the backdrop full-screen (avoids flicker of page content behind it).
+  // Instead, top-align the modal and size it to the visual viewport so the
+  // composer stays above the keyboard.
   const handleViewportResize = () => {
-    cancelAnimationFrame(keyboardRAF);
-    keyboardRAF = requestAnimationFrame(() => {
-      const vv = window.visualViewport!;
-      // Adjust the backdrop (not the modal) to fit the visual viewport.
-      // The backdrop uses `inset: 0` which stretches it via top+bottom.
-      // Setting bottom: auto breaks that stretch so height takes effect.
-      modalBackdrop.style.height = `${vv.height}px`;
-      modalBackdrop.style.top = `${vv.offsetTop}px`;
-      modalBackdrop.style.bottom = 'auto';
+    const vv = window.visualViewport!;
+    // Top-align so the modal doesn't get centered behind the keyboard
+    modalBackdrop.style.alignItems = 'flex-start';
+    modal.style.height = `${vv.height}px`;
+    modal.style.maxHeight = `${vv.height}px`;
+    if (vv.offsetTop > 0) {
+      modal.style.marginTop = `${vv.offsetTop}px`;
+    } else {
+      modal.style.marginTop = '';
+    }
 
-      if (isExpanded) {
-        messagesEl.scrollTop = messagesEl.scrollHeight;
-      }
-    });
+    if (isExpanded) {
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
   };
 
   if (window.visualViewport) {
@@ -1605,7 +1608,6 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     // Clean up document event listeners
     document.removeEventListener('keydown', handleEscapeKey);
     // Clean up virtual keyboard handling
-    cancelAnimationFrame(keyboardRAF);
     if (window.visualViewport) {
       window.visualViewport.removeEventListener('resize', handleViewportResize);
       window.visualViewport.removeEventListener('scroll', handleViewportResize);
