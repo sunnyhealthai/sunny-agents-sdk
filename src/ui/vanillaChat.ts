@@ -2443,6 +2443,7 @@ function ensureStyles() {
     display: flex;
     gap: 8px;
     justify-content: center;
+    max-width: 100%;
   }
   .sunny-verification-flow__code-input {
     width: 48px;
@@ -2547,6 +2548,31 @@ function ensureStyles() {
     }
     .sunny-chat__messages {
       padding: 16px;
+    }
+    .sunny-verification-flow__code-input {
+      width: 36px;
+      height: 44px;
+      font-size: 18px;
+      border-radius: 6px;
+    }
+    .sunny-verification-flow__code-inputs {
+      gap: 6px;
+    }
+    .sunny-verification-flow__phone-region {
+      min-width: 0;
+      width: 90px;
+      padding: 10px 8px;
+      font-size: 0.9em;
+    }
+    .sunny-verification-flow__phone-row {
+      gap: 6px;
+    }
+    .sunny-verification-flow__input {
+      padding: 10px 12px;
+      font-size: 1em;
+    }
+    .sunny-verification-flow {
+      padding: 14px;
     }
   }
   `;
