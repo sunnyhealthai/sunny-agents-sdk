@@ -28,7 +28,7 @@ const getIdTokenProvider = () => {
   return async () => null;
 };
 
-type ChatInstance = Awaited<ReturnType<typeof createSunnyChat>>;
+type ChatInstance = ReturnType<typeof createSunnyChat>;
 let chatDefault: ChatInstance | null = null;
 let chatCustomized: ChatInstance | null = null;
 let activeVariant: ChatVariant = 'default';
@@ -103,7 +103,7 @@ function getProfileSyncData(): AuthUpgradeProfileSyncData | null {
   return hasData ? result : null;
 }
 
-async function initializeChat(variant: ChatVariant): Promise<ChatInstance> {
+function initializeChat(variant: ChatVariant): ChatInstance {
   const isDefault = variant === 'default';
   const chatRef = isDefault ? chatDefault : chatCustomized;
   const container = isDefault ? defaultContainer! : customizedContainer!;
@@ -128,7 +128,7 @@ async function initializeChat(variant: ChatVariant): Promise<ChatInstance> {
     ...(profileSync ? { authUpgradeProfileSync: profileSync } : {}),
   };
 
-  const chat = await createSunnyChat(
+  const chat = createSunnyChat(
     isDefault
       ? {
           ...baseOptions,
@@ -191,7 +191,7 @@ chatVariantTabs.forEach((tab) => {
 
     // Lazy-init customized chat when first selected
     if (variant === 'customized' && !chatCustomized) {
-      await initializeChat('customized');
+      initializeChat('customized');
     }
   });
 });
@@ -337,7 +337,7 @@ passwordlessLogout?.addEventListener('click', async () => {
   currentPhone = null;
   updateAuthUI();
   hideStatus();
-  await initializeChat(activeVariant);
+  initializeChat(activeVariant);
 });
 
 // Auth type switching buttons (if they exist in the HTML)

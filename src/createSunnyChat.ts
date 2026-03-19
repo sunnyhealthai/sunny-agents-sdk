@@ -102,7 +102,7 @@ async function activateAuthType(
  * @example
  * ```ts
  * // Passwordless (starts anonymous, user verifies via email/SMS)
- * const chat = await createSunnyChat({
+ * const chat = createSunnyChat({
  *   container: document.getElementById('chat'),
  *   partnerIdentifier: 'acme-health',
  *   publicKey: 'pk-sunnyagents_abc_xyz',
@@ -113,7 +113,7 @@ async function activateAuthType(
  * @example
  * ```ts
  * // Token exchange
- * const chat = await createSunnyChat({
+ * const chat = createSunnyChat({
  *   container: document.getElementById('chat'),
  *   partnerIdentifier: 'acme-health',
  *   publicKey: 'pk-sunnyagents_abc_xyz',
@@ -128,7 +128,7 @@ async function activateAuthType(
  * chat.setAuthType('tokenExchange');
  * ```
  */
-export async function createSunnyChat(options: UnifiedSunnyChatOptions): Promise<VanillaChatInstance> {
+export function createSunnyChat(options: UnifiedSunnyChatOptions): VanillaChatInstance {
   // --- Validate required options ---
   if (!options.partnerIdentifier) {
     throw new Error('[createSunnyChat] partnerIdentifier is required');
