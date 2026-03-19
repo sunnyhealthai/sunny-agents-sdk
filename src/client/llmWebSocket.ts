@@ -35,6 +35,7 @@ export class LLMWebSocketManager {
   private tokenProvider?: TokenProvider;
   private authUpgradeHandlers: Set<AuthUpgradeHandler> = new Set();
   private pendingAuthUpgrade: Promise<boolean> | null = null;
+  private readyChangeCallbacks: Set<() => void> = new Set();
   private tokenExchangeManager: TokenExchangeManager | null = null;
   /** Cached SDK auth config returned by sdk.session.created. */
   private sdkAuthConfig: SdkAuthConfig | null = null;
@@ -241,6 +242,7 @@ export class LLMWebSocketManager {
               this.authUpgradeHandlers.forEach((handler) => {
                 try { handler(true, { user_id: data.user_id, email: data.email }); } catch { }
               });
+              this.readyChangeCallbacks.forEach((cb) => { try { cb(); } catch { } });
             } else if (data.type === 'auth.upgrade_failed') {
               this.authUpgradeHandlers.forEach((handler) => {
                 try { handler(false, { error: data.error, code: data.code }); } catch { }
@@ -265,12 +267,16 @@ export class LLMWebSocketManager {
         socket.addEventListener('close', (event) => {
           this.ws = null;
           this.connecting = null;
+          const wasAuthenticated = this.isAuthenticated;
           this.isAuthenticated = false;
           this.authenticatedUserId = null;
           this.sdkAuthConfig = null;
           this.sdkSessionReady = null;
           this.sdkSessionPromise = null;
           this.lastAuthToken = null;
+          if (wasAuthenticated) {
+            this.readyChangeCallbacks.forEach((cb) => { try { cb(); } catch { } });
+          }
           if (this.sdkSessionTimeout) {
             clearTimeout(this.sdkSessionTimeout);
             this.sdkSessionTimeout = null;
@@ -465,6 +471,19 @@ export class LLMWebSocketManager {
 
   getAuthenticatedUserId(): string | null {
     return this.authenticatedUserId;
+  }
+
+  /** Whether the connection is authenticated and ready for chat. */
+  isReady(): boolean {
+    return this.isAuthenticated;
+  }
+
+  /** Subscribe to ready-state changes (fires when isAuthenticated toggles). */
+  onReadyChange(cb: () => void): () => void {
+    this.readyChangeCallbacks.add(cb);
+    return () => {
+      this.readyChangeCallbacks.delete(cb);
+    };
   }
 
   /**

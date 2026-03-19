@@ -1,4 +1,5 @@
 import { SunnyAgentsClient } from '../client/SunnyAgentsClient';
+import type { LLMWebSocketManager } from '../client/llmWebSocket';
 import type { PasswordlessAuthManager } from '../client/passwordlessAuth';
 import type {
   AuthUpgradeProfileSyncData,
@@ -445,9 +446,10 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
         <div class="sunny-chat-modal__composer">
           <input type="text" class="sunny-chat-modal__input" placeholder="${placeholder}" aria-label="${placeholder}" />
           <button type="button" class="sunny-chat__send-btn" aria-label="Send message">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <svg class="sunny-chat__send-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="m22 2-7 20-4-9-9-4 20-7z" stroke-linejoin="round" stroke-linecap="round"/>
             </svg>
+            <span class="sunny-chat__send-spinner"></span>
           </button>
         </div>
       </div>
@@ -455,9 +457,10 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     <div class="sunny-chat__trigger">
       <input type="text" class="sunny-chat__trigger-input" placeholder="${placeholder}" aria-label="${placeholder}" />
       <button type="button" class="sunny-chat__send-btn" aria-label="Send message">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg class="sunny-chat__send-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="m22 2-7 20-4-9-9-4 20-7z" stroke-linejoin="round" stroke-linecap="round"/>
         </svg>
+        <span class="sunny-chat__send-spinner"></span>
       </button>
     </div>
   `;
@@ -477,6 +480,20 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   let latestSnapshot: SunnyAgentsClientSnapshot | null = null;
   let isExpanded = false;
   let isClosing = false; // Flag to prevent immediate reopen on focus
+
+  // Send-button loading spinner for tokenExchange users (anonymous === false)
+  if (!anonymous) {
+    const wsManager = config?.wsManager as LLMWebSocketManager | undefined;
+    const updateSendButtons = () => {
+      const loading = !wsManager?.isReady?.();
+      modalSendBtn.classList.toggle('is-loading', loading);
+      triggerSendBtn.classList.toggle('is-loading', loading);
+    };
+    updateSendButtons();
+    if (wsManager?.onReadyChange) {
+      unsubscribes.push(wsManager.onReadyChange(updateSendButtons));
+    }
+  }
 
   const setExpanded = (expanded: boolean) => {
     if (expanded === isExpanded) return;
@@ -1937,6 +1954,18 @@ function ensureStyles() {
     height: 18px;
     transform: translate(-1px, 1px);
   }
+  @keyframes sunny-spin { to { transform: rotate(360deg); } }
+  .sunny-chat__send-spinner {
+    display: none;
+    width: 18px;
+    height: 18px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: sunny-spin 0.6s linear infinite;
+  }
+  .sunny-chat__send-btn.is-loading .sunny-chat__send-icon { display: none; }
+  .sunny-chat__send-btn.is-loading .sunny-chat__send-spinner { display: block; }
   .sunny-chat-modal__composer .sunny-chat__send-btn {
     position: relative;
     right: auto;

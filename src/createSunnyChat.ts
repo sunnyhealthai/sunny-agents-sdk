@@ -211,6 +211,19 @@ export async function createSunnyChat(options: UnifiedSunnyChatOptions): Promise
     if (passwordlessAuth) {
       instance.setPasswordlessAuth(passwordlessAuth);
     }
+
+    // For tokenExchange, proactively connect and authenticate so chat is ready immediately
+    if (options.authType === 'tokenExchange') {
+      wsManager.connect()
+        .then(() => wsManager.waitForSdkSession())
+        .then(() => wsManager.upgradeAuthIfPossible({
+          migrateHistory: true,
+          profileSync: options.authUpgradeProfileSync,
+        }))
+        .catch((err) => {
+          console.warn('[createSunnyChat] Proactive auth failed (will retry on first message):', err);
+        });
+    }
   }).catch((err) => {
     console.error('[createSunnyChat] Failed to fetch SDK config:', err);
     throw err;
