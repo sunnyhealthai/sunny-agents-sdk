@@ -87,6 +87,11 @@ export interface VanillaChatInstance {
       authUpgradeProfileSync?: AuthUpgradeProfileSyncData | (() => Promise<AuthUpgradeProfileSyncData | null>);
     },
   ) => Promise<void>;
+  /**
+   * Set the passwordless auth manager after async initialization.
+   * Called by createSunnyChat once SDK config is fetched.
+   */
+  setPasswordlessAuth: (auth: PasswordlessAuthManager) => void;
 }
 
 const STYLE_ID = 'sunny-agents-vanilla-style';
@@ -395,8 +400,10 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     fontSize,
     fontFamily,
     dimensions,
-    passwordlessAuth,
+    passwordlessAuth: initialPasswordlessAuth,
   } = options;
+
+  let passwordlessAuth = initialPasswordlessAuth;
 
   // Use provided conversation ID or generate a new one (in-memory only)
   let persistedConversationId = providedConversationId || generateUuid();
@@ -1584,7 +1591,13 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     }
   };
 
-  return { client, destroy };
+  return {
+    client,
+    destroy,
+    setPasswordlessAuth: (auth: PasswordlessAuthManager) => {
+      passwordlessAuth = auth;
+    },
+  };
 }
 
 function ensureViewportMeta() {
