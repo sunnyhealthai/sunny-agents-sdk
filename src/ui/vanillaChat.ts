@@ -406,7 +406,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
 
   let passwordlessAuth = initialPasswordlessAuth;
 
-  // Use provided conversation ID or generate a new one (in-memory only)
+  // In-memory conversation id for this tab: reused across WebSocket reconnects / new server sessions
   let persistedConversationId = providedConversationId || generateUuid();
 
   const client = providedClient ?? new SunnyAgentsClient({

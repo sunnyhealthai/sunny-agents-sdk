@@ -102,6 +102,11 @@ function extractTextFromMessageItem(item: any): string {
     .join('');
 }
 
+/**
+ * Chat client: keeps **conversation** state in memory for the lifetime of this instance (same browser tab).
+ * When the WebSocket drops, the transport may use a new server **session**; the same `conversation_id` is still
+ * used for the next `sendMessage` so the user can continue the same thread after reconnect.
+ */
 export class SunnyAgentsClient {
   private readonly ws: LLMWebSocketManager;
   private readonly conversations = new Map<string, ConversationState>();
@@ -146,6 +151,9 @@ export class SunnyAgentsClient {
         : !!(config.idTokenProvider && config.tokenExchange);
 
     this.ws.onMessage(this.handleMessage);
+    this.ws.onConnectionClose(() => {
+      this.finalizeInterruptedStreams();
+    });
 
     if (config.initialConversationId) {
       this.ensureConversation(config.initialConversationId);
@@ -741,6 +749,31 @@ export class SunnyAgentsClient {
     });
     this.emit('streamingDone', { conversationId: ensuredId, messageId: msgId, text: finalText });
     this.notify();
+  }
+
+  /** When the socket closes mid-stream, stop spinner state and keep partial text; conversation id is unchanged. */
+  private finalizeInterruptedStreams(): void {
+    const pending = [...this.activeStreamByConversation.entries()];
+    this.activeStreamByConversation.clear();
+    for (const [conversationId, messageId] of pending) {
+      const ensuredId = this.ensureConversation(conversationId);
+      const conversation = this.conversations.get(ensuredId);
+      if (!conversation) continue;
+      const existing = this.getMessage(conversation, messageId);
+      if (!existing?.isStreaming) continue;
+      const finalText = existing.text ?? '';
+      this.upsertMessage(conversationId, {
+        ...existing,
+        id: messageId,
+        role: 'assistant',
+        text: finalText,
+        isStreaming: false,
+      });
+      this.emit('streamingDone', { conversationId: ensuredId, messageId, text: finalText });
+    }
+    if (pending.length > 0) {
+      this.notify();
+    }
   }
 
   private getMessage(conversation: ConversationState, id: string): SunnyAgentMessage | undefined {

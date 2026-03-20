@@ -535,6 +535,10 @@ new SunnyAgentsClient(config?: SunnyAgentsConfig)
 
 - **`getSnapshot()`**: Get current state snapshot. Returns `SunnyAgentsClientSnapshot` with `conversations` array and `activeConversationId`.
 
+#### WebSocket session vs conversation
+
+The server may assign a new WebSocket **session** after a disconnect (the SDK does not resume the previous `session_id`). **Conversation** identity is separate: `conversation_id`, the in-memory `conversations` map, and `activeConversationId` are kept for the lifetime of the `SunnyAgentsClient` instance (same tab). The next `sendMessage` continues the same conversation on the new transport session. Interrupted assistant streams are finalized (spinner cleared, partial text kept) when the socket closes.
+
 - **`sendMcpApproval(conversationId: string, approvalRequestId: string, approve: boolean, reason?: string | null)`**: Send an MCP approval response for a pending approval request.
 
 - **`setIdTokenProvider(provider: (() => Promise<string | null>) | undefined)`**: Dynamically update the ID token provider. Useful for updating authentication after a user logs in. Pass `undefined` to clear the provider.

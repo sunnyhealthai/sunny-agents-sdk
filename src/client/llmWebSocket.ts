@@ -36,6 +36,8 @@ export class LLMWebSocketManager {
   private authUpgradeHandlers: Set<AuthUpgradeHandler> = new Set();
   private pendingAuthUpgrade: Promise<boolean> | null = null;
   private readyChangeCallbacks: Set<() => void> = new Set();
+  /** Fires whenever the WebSocket closes (including intentional close and failed connections). */
+  private connectionCloseCallbacks: Set<() => void> = new Set();
   private tokenExchangeManager: TokenExchangeManager | null = null;
   /** Cached SDK auth config returned by sdk.session.created. */
   private sdkAuthConfig: SdkAuthConfig | null = null;
@@ -166,7 +168,8 @@ export class LLMWebSocketManager {
         // Construct WebSocket URL with /ws path
         const wsUrl = new URL('/ws', baseUrl);
 
-        // Include session_id for reconnection within same instance, omit for new connections (server will generate)
+        // Optional session_id (e.g. if set before connect). After any disconnect we clear it so the next
+        // connection always starts a new server session — we do not resume the previous WebSocket session.
         if (this.currentSessionId) {
           wsUrl.searchParams.set('session_id', this.currentSessionId);
         }
@@ -270,6 +273,8 @@ export class LLMWebSocketManager {
           const wasAuthenticated = this.isAuthenticated;
           this.isAuthenticated = false;
           this.authenticatedUserId = null;
+          // Do not reuse server session after disconnect; next connect() omits session_id for a new session
+          this.currentSessionId = null;
           this.sdkAuthConfig = null;
           this.sdkSessionReady = null;
           this.sdkSessionPromise = null;
@@ -281,6 +286,14 @@ export class LLMWebSocketManager {
             clearTimeout(this.sdkSessionTimeout);
             this.sdkSessionTimeout = null;
           }
+
+          this.connectionCloseCallbacks.forEach((cb) => {
+            try {
+              cb();
+            } catch {
+              /* ignore */
+            }
+          });
 
           // Auto-reconnect on unexpected closures (not normal closure)
           if (event.code !== 1000 && event.code !== 1001 && this.reconnectAttempts < 5) {
@@ -487,6 +500,17 @@ export class LLMWebSocketManager {
   }
 
   /**
+   * Subscribe to WebSocket close events (any reason). Use to finalize UI when the transport drops;
+   * the next connection uses a new server session — conversation identity is kept separately by the client.
+   */
+  onConnectionClose(cb: () => void): () => void {
+    this.connectionCloseCallbacks.add(cb);
+    return () => {
+      this.connectionCloseCallbacks.delete(cb);
+    };
+  }
+
+  /**
    * Gets an access token using token exchange if configured.
    * Returns null if no token provider is configured or if token exchange fails.
    */
@@ -636,7 +660,7 @@ export class LLMWebSocketManager {
     this.connecting = null;
     this.isAuthenticated = false;
     this.authenticatedUserId = null;
-    // Note: Keep currentSessionId for reconnection - only clear on explicit reset
+    this.currentSessionId = null;
     this.lastAuthToken = null;
 
     // Clear any pending SDK session timeout

@@ -44,6 +44,7 @@ export interface SunnyAgentsConfig {
    */
   idTokenProvider?: () => Promise<string | null>;
   sessionStorageKey?: string;
+  /** Stable in-memory conversation id for this client instance; survives WebSocket reconnect (new server session). */
   initialConversationId?: string;
   /**
    * Whether to create/persist conversations on the server.
