@@ -30,7 +30,7 @@ Starts as anonymous chat. Users can verify via email/SMS when prompted. Customiz
 ```ts
 import { createSunnyChat } from "@sunnyhealthai/agents-sdk";
 
-const chat = await createSunnyChat({
+const chat = createSunnyChat({
   container: document.getElementById("chat"),
   partnerIdentifier: "your-partner-name",
   publicKey: "pk-sunnyagents_abc_xyz",
@@ -49,7 +49,7 @@ const chat = await createSunnyChat({
 For partners with existing auth (Auth0, Firebase, etc.). You provide `idTokenProvider` only; the server supplies audience, clientId, organization, and tokenExchangeUrl based on your `publicKey`:
 
 ```ts
-const chat = await createSunnyChat({
+const chat = createSunnyChat({
   container: document.getElementById("chat"),
   partnerIdentifier: "your-partner-name",
   publicKey: "pk-sunnyagents_abc_xyz",
@@ -67,7 +67,7 @@ When upgrading from anonymous to authenticated, you can optionally send user pro
 ```ts
 import { createSunnyChat, type AuthUpgradeProfile, type AuthUpgradeAddress, type AuthUpgradeInsurance } from "@sunnyhealthai/agents-sdk";
 
-const chat = await createSunnyChat({
+const chat = createSunnyChat({
   container: document.getElementById("chat"),
   partnerIdentifier: "your-partner-name",
   publicKey: "pk-sunnyagents_abc_xyz",
@@ -104,7 +104,7 @@ const chat = await createSunnyChat({
 The returned instance includes `setAuthType()` for switching authentication at runtime:
 
 ```ts
-const chat = await createSunnyChat({
+const chat = createSunnyChat({
   container: document.getElementById("chat"),
   partnerIdentifier: "your-partner-name",
   publicKey: "pk-sunnyagents_abc_xyz",
@@ -122,7 +122,7 @@ await chat.setAuthType("tokenExchange", {
 Enterprise partners can customize the SDK appearance to match their brand via configuration—no source changes required:
 
 ```ts
-const chat = await createSunnyChat({
+const chat = createSunnyChat({
   container: document.getElementById("chat"),
   partnerIdentifier: "your-partner-name",
   publicKey: "pk-sunnyagents_abc_xyz",
@@ -313,7 +313,7 @@ The path of least resistance for passwordless is `createSunnyChat` with `authTyp
 import { createSunnyChat } from '@sunnyhealthai/agents-sdk';
 
 // Passwordless is handled automatically - verification UI appears in chat
-const chat = await createSunnyChat({
+const chat = createSunnyChat({
   container: document.getElementById('chat'),
   partnerIdentifier: 'your-partner-name',
   publicKey: 'pk-sunnyagents_abc_xyz',
@@ -449,7 +449,7 @@ await wsManager.upgradeAuthIfPossible({
 **Recommended API** - Unified entry point that automatically handles authentication and initialization. Auth configuration is retrieved from the server based on your `publicKey`.
 
 ```ts
-createSunnyChat(options: UnifiedSunnyChatOptions): Promise<VanillaChatInstance>
+createSunnyChat(options: UnifiedSunnyChatOptions): VanillaChatInstance
 ```
 
 **Configuration Options (`UnifiedSunnyChatOptions`):**
@@ -472,17 +472,17 @@ createSunnyChat(options: UnifiedSunnyChatOptions): Promise<VanillaChatInstance>
 
 **Returns:**
 
-- `Promise<VanillaChatInstance>` - Promise resolving to chat instance with:
+- `VanillaChatInstance` - Chat instance with:
   - `client: SunnyAgentsClient` - The underlying client instance
   - `destroy(): void` - Cleanup function to unmount the widget
   - `setAuthType(authType: SdkAuthType, options?: { idTokenProvider?; authUpgradeProfileSync? }): Promise<void>` - Switch authentication type at runtime
 
 **How It Works:**
 
-1. Connects to the WebSocket server and sends `sdk.session.create` with your `publicKey`
-2. Receives server-provided auth configuration (`SdkAuthConfig`) via `sdk.session.created`
+1. Creates and mounts the chat widget immediately (synchronous return)
+2. Fetches server-provided auth configuration (`SdkAuthConfig`) via HTTP in the background
 3. Activates the specified `authType` using the server configuration
-4. Creates and mounts the chat widget
+4. For `tokenExchange`: proactively connects WebSocket, establishes SDK session, and authenticates — so the first message sends instantly
 
 **Important Notes:**
 
