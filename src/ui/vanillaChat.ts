@@ -648,24 +648,6 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       }
     }
 
-    // Render quick response pills
-    if (convo.quickResponses?.length) {
-      const pillsRow = document.createElement('div');
-      pillsRow.className = 'sunny-chat__quick-responses';
-      convo.quickResponses.forEach((text, i) => {
-        const pill = document.createElement('button');
-        pill.type = 'button';
-        pill.className = 'sunny-chat__quick-pill';
-        pill.textContent = text;
-        pill.style.animationDelay = `${i * 80}ms`;
-        pill.addEventListener('click', () => {
-          modalInput.value = text;
-          void send();
-        });
-        pillsRow.appendChild(pill);
-      });
-      messagesEl.appendChild(pillsRow);
-    }
 
     messagesEl.scrollTop = messagesEl.scrollHeight;
     setExpanded(convo.messages.length > 0);
@@ -1740,7 +1722,6 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     client.on('snapshot', (snap) => render(snap)),
     client.on('streamingDelta', () => render()),
     client.on('streamingDone', () => render()),
-    client.on('quickResponses', () => render()),
     client.on('conversationCreated', ({ conversationId }) => {
       // If server generated a different ID than our in-memory one, update our reference
       // This happens when authenticated and server creates the conversation
@@ -2819,43 +2800,6 @@ function ensureStyles() {
     animation: sunny-send-burst 400ms cubic-bezier(0.16, 1, 0.3, 1);
   }
 
-  /* Quick Response Pills */
-  @keyframes sunny-pill-enter {
-    from { opacity: 0; transform: translateY(12px) scale(0.9); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
-  }
-  .sunny-chat__quick-responses {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    padding: 4px 0 8px;
-    align-self: flex-start;
-    position: relative;
-    z-index: 1;
-  }
-  .sunny-chat__quick-pill {
-    padding: 8px 16px;
-    border: 1px solid var(--sunny-color-primary-border);
-    border-radius: 20px;
-    background: var(--sunny-color-primary-fill-10);
-    color: var(--sunny-color-primary);
-    font-size: 0.929em;
-    font-weight: 500;
-    cursor: pointer;
-    font-family: inherit;
-    opacity: 0;
-    animation: sunny-pill-enter 300ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    transition: background var(--sunny-transition-fast), border-color var(--sunny-transition-fast), box-shadow var(--sunny-transition-fast);
-  }
-  .sunny-chat__quick-pill:hover {
-    background: var(--sunny-color-primary-fill-20);
-    border-color: var(--sunny-color-primary-border-hover);
-    box-shadow: 0 2px 8px var(--sunny-color-primary-shadow);
-  }
-  .sunny-chat__quick-pill:active {
-    transform: scale(0.96);
-  }
-
   /* Artifact Card Reveals */
   @keyframes sunny-card-reveal {
     from { opacity: 0; transform: translateY(16px); }
@@ -2869,14 +2813,12 @@ function ensureStyles() {
   /* Accessibility: Reduced Motion */
   @media (prefers-reduced-motion: reduce) {
     .sunny-chat__thinking-dot,
-    .sunny-chat__quick-pill,
     .sunny-provider-card,
     .sunny-provider-search-results__provider,
     .sunny-chat-modal-backdrop--open .sunny-chat-modal {
       animation: none !important;
     }
     .sunny-chat__thinking-dot,
-    .sunny-chat__quick-pill,
     .sunny-provider-card,
     .sunny-provider-search-results__provider {
       opacity: 1 !important;

@@ -21,7 +21,6 @@ export interface ConversationState {
   id: string;
   title?: string | null;
   messages: SunnyAgentMessage[];
-  quickResponses?: string[];
 }
 
 export interface FileAttachment {

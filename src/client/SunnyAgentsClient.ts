@@ -17,7 +17,6 @@ type ClientEventMap = {
   messagesUpdated: { conversationId: string; messages: SunnyAgentMessage[] };
   streamingDelta: { conversationId: string; messageId: string; text: string };
   streamingDone: { conversationId: string; messageId: string; text: string };
-  quickResponses: { conversationId: string; quickResponses: string[] };
 };
 
 interface ChatPayload {
@@ -183,7 +182,6 @@ export class SunnyAgentsClient {
       conversations: Array.from(this.conversations.values()).map((c) => ({
         ...c,
         messages: [...c.messages],
-        quickResponses: c.quickResponses ? [...c.quickResponses] : undefined,
       })),
       activeConversationId: this.activeConversationId,
     };
@@ -462,7 +460,6 @@ export class SunnyAgentsClient {
         id: resolvedId,
         title: title ?? null,
         messages: [],
-        quickResponses: [],
       });
       this.emit('conversationCreated', { conversationId: resolvedId, title: title ?? null });
     }
@@ -499,7 +496,6 @@ export class SunnyAgentsClient {
           id: newId,
           title,
           messages,
-          quickResponses: existingConversation.quickResponses,
         };
 
         // Move conversation from old ID to new ID
@@ -618,19 +614,6 @@ export class SunnyAgentsClient {
         messages: mapped,
       });
       this.emit('messagesUpdated', { conversationId: ensuredId, messages: mapped });
-      this.notify();
-      return;
-    }
-
-    if (type === 'chat.quick_responses' && conversationId) {
-      const responses = Array.isArray(data.responses)
-        ? (data.responses.map((r) => r?.text).filter(Boolean) as string[])
-        : [];
-      const ensuredId = this.ensureConversation(conversationId);
-      const next = this.conversations.get(ensuredId)!;
-      next.quickResponses = responses;
-      this.conversations.set(ensuredId, { ...next });
-      this.emit('quickResponses', { conversationId: ensuredId, quickResponses: responses });
       this.notify();
       return;
     }
