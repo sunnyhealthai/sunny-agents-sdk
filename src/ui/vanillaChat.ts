@@ -592,6 +592,12 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
         // For messages with artifacts, do a content rebuild
         streamingBubbleEl.innerHTML = '';
         appendAssistantContent(streamingBubbleEl, streamingMsg);
+        // Disable animation on cards during streaming rebuild so they
+        // don't replay the reveal animation on every incoming chunk
+        streamingBubbleEl.querySelectorAll('.sunny-provider-card, .sunny-provider-search-results__provider').forEach(el => {
+          (el as HTMLElement).style.animation = 'none';
+          (el as HTMLElement).style.opacity = '1';
+        });
         const approvalBlock = renderApprovalCards(streamingMsg, approvalStatuses, convo.id);
         if (approvalBlock) {
           streamingBubbleEl.appendChild(approvalBlock);
@@ -625,6 +631,14 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
         row.classList.add('sunny-chat__message--streaming');
       }
       const bubble = buildMessageBubble(msg, convo.id, approvalStatuses);
+      // Disable reveal animation for cards in already-completed messages
+      // so they don't replay every time the DOM is rebuilt
+      if (!msg.isStreaming) {
+        bubble.querySelectorAll('.sunny-provider-card, .sunny-provider-search-results__provider').forEach(el => {
+          (el as HTMLElement).style.animation = 'none';
+          (el as HTMLElement).style.opacity = '1';
+        });
+      }
       row.appendChild(bubble);
       messagesEl.appendChild(row);
 
