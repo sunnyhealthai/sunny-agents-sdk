@@ -1872,7 +1872,7 @@ function ensureStyles() {
   .sunny-chat-modal-backdrop--open {
     opacity: 1;
     visibility: visible;
-    background: radial-gradient(ellipse at center, rgba(0, 111, 255, 0.03) 0%, rgba(33, 33, 36, 0.85) 70%);
+    background: rgba(33, 33, 36, 0.85);
   }
 
   /* Modal Container */
@@ -1892,15 +1892,9 @@ function ensureStyles() {
     transition: transform var(--sunny-transition-spring), opacity 250ms ease;
     box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04), 0 8px 16px rgba(0, 0, 0, 0.08), 0 24px 48px rgba(0, 0, 0, 0.16);
   }
-  @keyframes sunny-modal-shimmer {
-    0% { box-shadow: 0 0 0 1px rgba(0, 111, 255, 0), 0 8px 16px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.16); }
-    30% { box-shadow: 0 0 0 2px var(--sunny-color-primary-ring), 0 8px 24px rgba(0,0,0,0.10), 0 24px 48px rgba(0,0,0,0.16); }
-    100% { box-shadow: 0 0 0 1px rgba(0,0,0,0.04), 0 8px 16px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.16); }
-  }
   .sunny-chat-modal-backdrop--open .sunny-chat-modal {
     transform: scale(1) translateY(0);
     opacity: 1;
-    animation: sunny-modal-shimmer 600ms ease-out;
   }
 
   /* Close Button */
