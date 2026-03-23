@@ -18,9 +18,10 @@ async function fetchSdkConfig(options: {
   partnerIdentifier: string;
 }): Promise<SdkAuthConfig> {
   const baseUrl = options.websocketUrl ?? 'wss://chat.api.sunnyhealthai-staging.com';
+  // Always use HTTPS for config fetch to avoid mixed-content blocking
   const httpUrl = baseUrl
     .replace(/^wss:\/\//, 'https://')
-    .replace(/^ws:\/\//, 'http://');
+    .replace(/^ws:\/\//, 'https://');
 
   const url = new URL('/sdk/config', httpUrl);
   const response = await fetch(url.toString(), {

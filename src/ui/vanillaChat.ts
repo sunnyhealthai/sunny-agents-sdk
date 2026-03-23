@@ -532,6 +532,12 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     setExpanded(false);
   };
 
+  // Track the currently streaming message for in-place updates
+  let streamingMsgId: string | null = null;
+  let streamingBubbleEl: HTMLElement | null = null;
+  let lastRenderedMessageCount = 0;
+  let lastRenderedConvoId: string | null = null;
+
   const render = (snapshot?: SunnyAgentsClientSnapshot) => {
     const snap = snapshot ?? client.getSnapshot();
     latestSnapshot = snap;
@@ -545,17 +551,106 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       return;
     }
 
-    messagesEl.innerHTML = '';
-    // Filter out hidden messages from display
     const visibleMessages = convo.messages.filter((msg) => !msg.text?.includes('{hidden_message}'));
     const approvalStatuses = buildApprovalStatuses(convo.messages);
 
+    // Find the streaming message (if any)
+    const lastMsg = visibleMessages[visibleMessages.length - 1];
+    const streamingMsg = lastMsg?.role === 'assistant' && lastMsg.isStreaming ? lastMsg : null;
+    const currentStreamId = streamingMsg?.id ?? null;
+    const isThinking = streamingMsg && (!streamingMsg.text || streamingMsg.text === '…' || streamingMsg.text === '...');
+
+    // Fast path: if only the streaming message content changed, update in-place
+    const structureChanged =
+      convo.id !== lastRenderedConvoId ||
+      visibleMessages.length !== lastRenderedMessageCount ||
+      currentStreamId !== streamingMsgId;
+
+    if (!structureChanged && streamingBubbleEl && streamingMsg && !isThinking) {
+      // Fast path: update streaming content without rebuilding DOM structure
+      const baseText = streamingMsg.text || '';
+      const segments = splitArtifactSegments(baseText);
+      const isPlainText = segments.length <= 1 && (!segments[0] || segments[0].type === 'text');
+
+      if (isPlainText) {
+        // For plain text streaming, update the paragraph innerHTML directly
+        const textContent = isPlainText && segments[0]?.type === 'text' ? segments[0].value : baseText;
+        const cleanedText = textContent
+          .replace(/^`+\s*/gm, '')
+          .replace(/\s*`+$/gm, '')
+          .replace(/\n`+\n/g, '\n\n')
+          .replace(/^\s*`+\s*$/gm, '')
+          .trim();
+        const firstP = streamingBubbleEl.querySelector('p');
+        if (firstP && cleanedText) {
+          firstP.innerHTML = parseMarkdown(cleanedText);
+        } else if (cleanedText) {
+          streamingBubbleEl.innerHTML = '';
+          appendAssistantContent(streamingBubbleEl, streamingMsg);
+        }
+      } else {
+        // For messages with artifacts, do a content rebuild
+        streamingBubbleEl.innerHTML = '';
+        appendAssistantContent(streamingBubbleEl, streamingMsg);
+        const approvalBlock = renderApprovalCards(streamingMsg, approvalStatuses, convo.id);
+        if (approvalBlock) {
+          streamingBubbleEl.appendChild(approvalBlock);
+        }
+      }
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      return;
+    }
+
+    // Full rebuild
+    messagesEl.innerHTML = '';
+    streamingBubbleEl = null;
+    streamingMsgId = currentStreamId;
+    lastRenderedMessageCount = visibleMessages.length;
+    lastRenderedConvoId = convo.id;
+
     for (const msg of visibleMessages) {
+      // Show thinking indicator as a standalone row when waiting for first token
+      const msgIsThinking = msg.role === 'assistant' && msg.isStreaming && (!msg.text || msg.text === '…' || msg.text === '...');
+      if (msgIsThinking) {
+        const thinkingRow = document.createElement('div');
+        thinkingRow.className = 'sunny-chat__thinking-row';
+        thinkingRow.appendChild(createThinkingOrb(getThinkingStatus(msg)));
+        messagesEl.appendChild(thinkingRow);
+        continue;
+      }
+
       const row = document.createElement('div');
       row.className = `sunny-chat__message sunny-chat__message--${msg.role}`;
+      if (msg.role === 'assistant' && msg.isStreaming && msg.text) {
+        row.classList.add('sunny-chat__message--streaming');
+      }
       const bubble = buildMessageBubble(msg, convo.id, approvalStatuses);
       row.appendChild(bubble);
       messagesEl.appendChild(row);
+
+      // Track the streaming bubble for future in-place updates
+      if (msg === streamingMsg && !msgIsThinking) {
+        streamingBubbleEl = bubble;
+      }
+    }
+
+    // Render quick response pills
+    if (convo.quickResponses?.length) {
+      const pillsRow = document.createElement('div');
+      pillsRow.className = 'sunny-chat__quick-responses';
+      convo.quickResponses.forEach((text, i) => {
+        const pill = document.createElement('button');
+        pill.type = 'button';
+        pill.className = 'sunny-chat__quick-pill';
+        pill.textContent = text;
+        pill.style.animationDelay = `${i * 80}ms`;
+        pill.addEventListener('click', () => {
+          modalInput.value = text;
+          void send();
+        });
+        pillsRow.appendChild(pill);
+      });
+      messagesEl.appendChild(pillsRow);
     }
 
     messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -580,6 +675,43 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     }
 
     return bubble;
+  };
+
+  const getThinkingStatus = (msg: SunnyAgentMessage): string => {
+    const items = msg.outputItems;
+    if (!items || items.length === 0) return 'Thinking';
+    // Walk items in reverse to find the most recent activity
+    for (let i = items.length - 1; i >= 0; i--) {
+      const item = items[i];
+      if (!item?.type) continue;
+      if (item.type === 'mcp_approval_request') return 'Awaiting approval';
+      if (item.type === 'mcp_call') return 'Using tools';
+      if (item.type === 'function_call' || item.type === 'function_call_output') {
+        const name = item.name ? `: ${item.name}` : '';
+        return `Calling tool${name}`;
+      }
+      if (item.type === 'web_search_call') return 'Searching';
+      if (item.type === 'reasoning') return 'Reasoning';
+      if (item.type === 'file_search_call') return 'Searching files';
+      if (item.type === 'code_interpreter_call') return 'Running code';
+      if (item.type === 'computer_call') return 'Using computer';
+    }
+    return 'Thinking';
+  };
+
+  const createThinkingOrb = (statusText?: string): HTMLElement => {
+    const label = statusText || 'Thinking';
+    const orb = document.createElement('div');
+    orb.className = 'sunny-chat__thinking-orb';
+    orb.innerHTML = `
+      <div class="sunny-chat__thinking-dots">
+        <div class="sunny-chat__thinking-dot"></div>
+        <div class="sunny-chat__thinking-dot"></div>
+        <div class="sunny-chat__thinking-dot"></div>
+      </div>
+      <span class="sunny-chat__thinking-label">${label}\u2026</span>
+    `;
+    return orb;
   };
 
   const appendAssistantContent = (container: HTMLElement, message: SunnyAgentMessage) => {
@@ -611,15 +743,22 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
           }
         }
       } else if (segment.type === 'expanded_profile') {
-        container.appendChild(createExpandedProviderCard(segment.data));
+        const card = createExpandedProviderCard(segment.data);
+        card.style.animationDelay = '0ms';
+        container.appendChild(card);
       } else if (segment.type === 'minimal_profile') {
-        container.appendChild(createMinimalProviderCard(segment.data));
+        const card = createMinimalProviderCard(segment.data);
+        card.style.animationDelay = '0ms';
+        container.appendChild(card);
       } else if (segment.type === 'legacy_profile') {
-        container.appendChild(createLegacyProviderCard(segment.data));
+        const card = createLegacyProviderCard(segment.data);
+        card.style.animationDelay = '0ms';
+        container.appendChild(card);
       } else if (segment.type === 'provider_search_results') {
-        // Append each provider card individually
+        // Append each provider card individually with staggered animation
         const providerCards = createProviderSearchResultsCard(segment.data);
-        providerCards.forEach((card) => {
+        providerCards.forEach((card, index) => {
+          card.style.animationDelay = `${index * 100}ms`;
           container.appendChild(card);
         });
       } else if (segment.type === 'verification_flow') {
@@ -1466,6 +1605,17 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     list.appendChild(item);
   };
 
+  const triggerSendRipple = (btn: HTMLElement) => {
+    const ripple = document.createElement('span');
+    ripple.className = 'sunny-chat__send-ripple';
+    btn.appendChild(ripple);
+    btn.classList.add('sunny-chat__send-btn--sending');
+    setTimeout(() => {
+      ripple.remove();
+      btn.classList.remove('sunny-chat__send-btn--sending');
+    }, 400);
+  };
+
   const send = async () => {
     const text = modalInput.value.trim();
     if (!text) return;
@@ -1486,6 +1636,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
 
   // Modal send button
   const handleModalSendClick = () => {
+    triggerSendRipple(modalSendBtn);
     void send().catch((error) => {
       const errorMessage = error instanceof Error ? error.message : 'Failed to send message';
       console.error('[VanillaChat] Error sending message:', errorMessage);
@@ -1518,6 +1669,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
 
   // Trigger send button: send message and open modal
   const handleTriggerSendClick = () => {
+    triggerSendRipple(triggerSendBtn);
     void sendFromTrigger();
   };
   triggerSendBtn.addEventListener('click', handleTriggerSendClick);
@@ -1574,6 +1726,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     client.on('snapshot', (snap) => render(snap)),
     client.on('streamingDelta', () => render()),
     client.on('streamingDone', () => render()),
+    client.on('quickResponses', () => render()),
     client.on('conversationCreated', ({ conversationId }) => {
       // If server generated a different ID than our in-memory one, update our reference
       // This happens when authenticated and server creates the conversation
@@ -1697,6 +1850,8 @@ function ensureStyles() {
     /* Timing */
     --sunny-transition-fast: 120ms ease;
     --sunny-transition-normal: 200ms ease;
+    --sunny-transition-spring: 400ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    --sunny-transition-smooth: 300ms cubic-bezier(0.16, 1, 0.3, 1);
     
     font-family: var(--sunny-font-family);
     font-size: var(--sunny-font-size-base);
@@ -1722,6 +1877,7 @@ function ensureStyles() {
   .sunny-chat-modal-backdrop--open {
     opacity: 1;
     visibility: visible;
+    background: radial-gradient(ellipse at center, rgba(0, 111, 255, 0.03) 0%, rgba(33, 33, 36, 0.85) 70%);
   }
 
   /* Modal Container */
@@ -1736,14 +1892,20 @@ function ensureStyles() {
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    transform: scale(0.96) translateY(8px);
+    transform: scale(0.92) translateY(16px);
     opacity: 0;
-    transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1), opacity var(--sunny-transition-normal);
+    transition: transform var(--sunny-transition-spring), opacity 250ms ease;
     box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.04), 0 8px 16px rgba(0, 0, 0, 0.08), 0 24px 48px rgba(0, 0, 0, 0.16);
+  }
+  @keyframes sunny-modal-shimmer {
+    0% { box-shadow: 0 0 0 1px rgba(0, 111, 255, 0), 0 8px 16px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.16); }
+    30% { box-shadow: 0 0 0 2px var(--sunny-color-primary-ring), 0 8px 24px rgba(0,0,0,0.10), 0 24px 48px rgba(0,0,0,0.16); }
+    100% { box-shadow: 0 0 0 1px rgba(0,0,0,0.04), 0 8px 16px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.16); }
   }
   .sunny-chat-modal-backdrop--open .sunny-chat-modal {
     transform: scale(1) translateY(0);
     opacity: 1;
+    animation: sunny-modal-shimmer 600ms ease-out;
   }
 
   /* Close Button */
@@ -1807,6 +1969,8 @@ function ensureStyles() {
     border-radius: 14px;
     line-height: 1.55;
     font-size: 1em;
+    position: relative;
+    z-index: 1;
   }
   .sunny-chat__message--user {
     align-self: flex-end;
@@ -1940,6 +2104,7 @@ function ensureStyles() {
     transition: background var(--sunny-transition-fast), transform var(--sunny-transition-fast), box-shadow var(--sunny-transition-fast);
     flex-shrink: 0;
     box-shadow: 0 2px 8px var(--sunny-color-primary-shadow);
+    overflow: hidden;
   }
   .sunny-chat__send-btn:hover {
     background: var(--sunny-color-primary-hover);
@@ -2563,6 +2728,148 @@ function ensureStyles() {
     text-align: center;
   }
 
+  /* === Gemini-Inspired Animations === */
+
+  /* Thinking Indicator */
+  @keyframes sunny-thinking-wave {
+    0%, 80%, 100% { transform: translateY(0); }
+    40% { transform: translateY(-6px); }
+  }
+  .sunny-chat__thinking-row {
+    align-self: flex-start;
+    padding: 4px 0;
+  }
+  .sunny-chat__thinking-orb {
+    display: inline-flex;
+    align-items: center;
+    padding: 12px 18px;
+    background: var(--sunny-color-background);
+    border: 1px solid var(--sunny-gray-200);
+    border-radius: 14px 14px 14px 4px;
+    box-shadow: var(--sunny-shadow-sm);
+  }
+  .sunny-chat__thinking-dots {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    position: relative;
+    overflow: visible;
+    padding: 6px 4px;
+  }
+  .sunny-chat__thinking-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--sunny-color-primary), var(--sunny-color-primary-muted));
+    animation: sunny-thinking-wave 1.4s ease-in-out infinite;
+    opacity: 0.7;
+  }
+  .sunny-chat__thinking-dot:nth-child(1) { animation-delay: 0s; }
+  .sunny-chat__thinking-dot:nth-child(2) { animation-delay: 0.16s; }
+  .sunny-chat__thinking-dot:nth-child(3) { animation-delay: 0.32s; }
+  .sunny-chat__thinking-label {
+    font-size: 0.857em;
+    color: var(--sunny-gray-500);
+    margin-left: 2px;
+    white-space: nowrap;
+  }
+
+  /* Message Streaming Indicator */
+  .sunny-chat__message--streaming {
+    border-color: var(--sunny-color-primary-border);
+  }
+
+  /* Send Button Ripple */
+  @keyframes sunny-send-ripple {
+    0% { transform: scale(0); opacity: 0.5; }
+    100% { transform: scale(2.5); opacity: 0; }
+  }
+  @keyframes sunny-send-burst {
+    0% { transform: translate(-1px, 1px) scale(1) rotate(0deg); }
+    30% { transform: translate(-1px, 1px) scale(0.6) rotate(45deg); }
+    60% { transform: translate(-1px, 1px) scale(1.1) rotate(0deg); }
+    100% { transform: translate(-1px, 1px) scale(1) rotate(0deg); }
+  }
+  .sunny-chat__send-ripple {
+    position: absolute;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.4);
+    animation: sunny-send-ripple 400ms ease-out forwards;
+    pointer-events: none;
+    top: 0;
+    left: 0;
+  }
+  .sunny-chat__send-btn--sending .sunny-chat__send-icon {
+    animation: sunny-send-burst 400ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* Quick Response Pills */
+  @keyframes sunny-pill-enter {
+    from { opacity: 0; transform: translateY(12px) scale(0.9); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .sunny-chat__quick-responses {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 4px 0 8px;
+    align-self: flex-start;
+    position: relative;
+    z-index: 1;
+  }
+  .sunny-chat__quick-pill {
+    padding: 8px 16px;
+    border: 1px solid var(--sunny-color-primary-border);
+    border-radius: 20px;
+    background: var(--sunny-color-primary-fill-10);
+    color: var(--sunny-color-primary);
+    font-size: 0.929em;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    opacity: 0;
+    animation: sunny-pill-enter 300ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    transition: background var(--sunny-transition-fast), border-color var(--sunny-transition-fast), box-shadow var(--sunny-transition-fast);
+  }
+  .sunny-chat__quick-pill:hover {
+    background: var(--sunny-color-primary-fill-20);
+    border-color: var(--sunny-color-primary-border-hover);
+    box-shadow: 0 2px 8px var(--sunny-color-primary-shadow);
+  }
+  .sunny-chat__quick-pill:active {
+    transform: scale(0.96);
+  }
+
+  /* Artifact Card Reveals */
+  @keyframes sunny-card-reveal {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .sunny-provider-card,
+  .sunny-provider-search-results__provider {
+    animation: sunny-card-reveal 400ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  /* Accessibility: Reduced Motion */
+  @media (prefers-reduced-motion: reduce) {
+    .sunny-chat__thinking-dot,
+    .sunny-chat__quick-pill,
+    .sunny-provider-card,
+    .sunny-provider-search-results__provider,
+    .sunny-chat-modal-backdrop--open .sunny-chat-modal {
+      animation: none !important;
+    }
+    .sunny-chat__thinking-dot,
+    .sunny-chat__quick-pill,
+    .sunny-provider-card,
+    .sunny-provider-search-results__provider {
+      opacity: 1 !important;
+      transform: none !important;
+    }
+  }
+
   /* Responsive */
   @media (max-width: 640px) {
     .sunny-chat-modal {
@@ -2610,6 +2917,10 @@ function ensureStyles() {
     }
     .sunny-verification-flow {
       padding: 14px;
+    }
+    .sunny-chat__thinking-dot {
+      width: 7px;
+      height: 7px;
     }
   }
   `;

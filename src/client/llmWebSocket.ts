@@ -161,8 +161,8 @@ export class LLMWebSocketManager {
         } else if (backendUrl.startsWith('https://')) {
           baseUrl = backendUrl.replace('https://', 'wss://');
         } else if (!backendUrl.startsWith('ws://') && !backendUrl.startsWith('wss://')) {
-          // If no protocol specified, default to ws://
-          baseUrl = `ws://${backendUrl}`;
+          // If no protocol specified, default to wss:// to avoid mixed-content issues
+          baseUrl = `wss://${backendUrl}`;
         }
 
         // Construct WebSocket URL with /ws path
