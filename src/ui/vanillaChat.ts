@@ -11,26 +11,19 @@ import type {
   SunnyAgentMessageItem,
   SunnyAgentsClientSnapshot,
   SunnyAgentsConfig,
+  VanillaChatColors,
+  VanillaChatConciergePanel,
   VanillaChatDimensions,
+  VanillaChatDisplayMode,
+  VanillaChatPromptSuggestion,
 } from '../types';
-
-/**
- * Theme color configuration for the chat UI.
- */
-export interface VanillaChatColors {
-  /** Primary color used for user messages, send button, and focus states. Default: #006fff */
-  primary?: string;
-  /** Secondary color used for text and UI elements. Default: #212124 */
-  secondary?: string;
-  /** Accent color used for success states and highlights. Default: #22c55e */
-  accent?: string;
-  /** Background color for modal and content areas. Default: #fff */
-  background?: string;
-  /** Main text color. Default: #212124 */
-  text?: string;
-}
-
-export type { VanillaChatDimensions };
+export type {
+  VanillaChatColors,
+  VanillaChatConciergePanel,
+  VanillaChatDimensions,
+  VanillaChatDisplayMode,
+  VanillaChatPromptSuggestion,
+};
 
 export interface VanillaChatOptions {
   container: HTMLElement;
@@ -55,6 +48,16 @@ export interface VanillaChatOptions {
    * Uses CSS custom properties for easy styling.
    */
   colors?: VanillaChatColors;
+  /**
+   * Display mode for the collapsed widget.
+   * - trigger: input bar only
+   * - concierge: intro copy, suggestions, branding, and the trigger
+   */
+  displayMode?: VanillaChatDisplayMode;
+  /**
+   * Additional content for the concierge panel mode.
+   */
+  concierge?: VanillaChatConciergePanel;
   /**
    * Base font size for chat content (e.g. "14px", "1rem"). Default: 14px
    */
@@ -104,6 +107,28 @@ const DOCTOR_PROFILE_START = '{doctor_profile}';
 const DOCTOR_PROFILE_END = '{/doctor_profile}';
 const VERIFICATION_FLOW_START = '{verification_flow}';
 const VERIFICATION_FLOW_END = '{/verification_flow}';
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function normalizePromptSuggestions(
+  suggestions?: Array<string | VanillaChatPromptSuggestion>,
+): VanillaChatPromptSuggestion[] {
+  return (suggestions ?? []).map((suggestion) =>
+    typeof suggestion === 'string'
+      ? { label: suggestion, prompt: suggestion }
+      : {
+          label: suggestion.label,
+          prompt: suggestion.prompt ?? suggestion.label,
+        },
+  );
+}
 
 /** Complete E.164 country calling codes for phone region dropdown. Sorted numerically, US first. */
 const COUNTRY_CODES: { code: string; label: string }[] = [
@@ -393,11 +418,12 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     container,
     client: providedClient,
     config,
-    headerTitle = 'Sunny Agents',
     placeholder = 'Ask anything…',
     anonymous = false,
     conversationId: providedConversationId,
     colors = {},
+    displayMode = 'trigger',
+    concierge,
     fontSize,
     fontFamily,
     dimensions,
@@ -421,7 +447,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
 
   // DOM structure
   const root = document.createElement('div');
-  root.className = 'sunny-chat sunny-chat--collapsed';
+  root.className = `sunny-chat sunny-chat--collapsed ${displayMode === 'concierge' ? 'sunny-chat--concierge' : ''}`.trim();
 
   // Apply custom theme properties
   if (colors.primary) root.style.setProperty('--sunny-color-primary', colors.primary);
@@ -429,11 +455,57 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   if (colors.accent) root.style.setProperty('--sunny-color-accent', colors.accent);
   if (colors.background) root.style.setProperty('--sunny-color-background', colors.background);
   if (colors.text) root.style.setProperty('--sunny-color-text', colors.text);
+  if (colors.panelBackground) root.style.setProperty('--sunny-panel-background', colors.panelBackground);
+  if (colors.mutedText) root.style.setProperty('--sunny-color-muted-text', colors.mutedText);
+  if (colors.chipBackground) root.style.setProperty('--sunny-chip-background', colors.chipBackground);
+  if (colors.chipBorder) root.style.setProperty('--sunny-chip-border', colors.chipBorder);
+  if (colors.chipText) root.style.setProperty('--sunny-chip-text', colors.chipText);
   if (fontSize) root.style.setProperty('--sunny-font-size-base', fontSize);
   if (fontFamily) root.style.setProperty('--sunny-font-family', fontFamily);
   if (dimensions?.width) root.style.setProperty('--sunny-modal-width', dimensions.width);
   if (dimensions?.height) root.style.setProperty('--sunny-modal-height', dimensions.height);
   if (dimensions?.triggerMaxWidth) root.style.setProperty('--sunny-trigger-max-width', dimensions.triggerMaxWidth);
+  if (dimensions?.panelMaxWidth) root.style.setProperty('--sunny-panel-max-width', dimensions.panelMaxWidth);
+  const normalizedSuggestions = normalizePromptSuggestions(concierge?.suggestions);
+  const conciergeAlign = concierge?.align === 'center' ? 'center' : 'left';
+  const introMarkup = concierge?.introText
+    ? `
+        <p class="sunny-chat__concierge-intro">
+          ${escapeHtml(concierge.introText)}
+          ${concierge?.introStrongText ? ` <strong>${escapeHtml(concierge.introStrongText)}</strong>` : ''}
+        </p>
+      `
+    : '';
+  const suggestionsMarkup = normalizedSuggestions.length
+    ? `
+        <div class="sunny-chat__suggestions" aria-label="Example prompts">
+          ${normalizedSuggestions
+            .map(
+              (suggestion) => `
+                <button
+                  type="button"
+                  class="sunny-chat__suggestion-btn"
+                  data-suggestion-prompt="${escapeHtml(suggestion.prompt ?? suggestion.label)}"
+                >
+                  ${escapeHtml(suggestion.label)}
+                </button>
+              `,
+            )
+            .join('')}
+        </div>
+      `
+    : '';
+  const triggerMarkup = `
+    <div class="sunny-chat__trigger">
+      <input type="text" class="sunny-chat__trigger-input" placeholder="${escapeHtml(placeholder)}" aria-label="${escapeHtml(placeholder)}" />
+      <button type="button" class="sunny-chat__send-btn" aria-label="Send message">
+        <svg class="sunny-chat__send-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="m22 2-7 20-4-9-9-4 20-7z" stroke-linejoin="round" stroke-linecap="round"/>
+        </svg>
+        <span class="sunny-chat__send-spinner"></span>
+      </button>
+    </div>
+  `;
   root.innerHTML = `
     <div class="sunny-chat-modal-backdrop" aria-hidden="true">
       <div class="sunny-chat-modal" role="dialog" aria-modal="true">
@@ -444,7 +516,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
         </button>
         <div class="sunny-chat__messages" aria-live="polite"></div>
         <div class="sunny-chat-modal__composer">
-          <input type="text" class="sunny-chat-modal__input" placeholder="${placeholder}" aria-label="${placeholder}" />
+          <input type="text" class="sunny-chat-modal__input" placeholder="${escapeHtml(placeholder)}" aria-label="${escapeHtml(placeholder)}" />
           <button type="button" class="sunny-chat__send-btn" aria-label="Send message">
             <svg class="sunny-chat__send-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="m22 2-7 20-4-9-9-4 20-7z" stroke-linejoin="round" stroke-linecap="round"/>
@@ -454,15 +526,28 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
         </div>
       </div>
     </div>
-    <div class="sunny-chat__trigger">
-      <input type="text" class="sunny-chat__trigger-input" placeholder="${placeholder}" aria-label="${placeholder}" />
-      <button type="button" class="sunny-chat__send-btn" aria-label="Send message">
-        <svg class="sunny-chat__send-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="m22 2-7 20-4-9-9-4 20-7z" stroke-linejoin="round" stroke-linecap="round"/>
-        </svg>
-        <span class="sunny-chat__send-spinner"></span>
-      </button>
-    </div>
+    ${
+      displayMode === 'concierge'
+        ? `
+          <div class="sunny-chat__concierge-shell sunny-chat__concierge-shell--${conciergeAlign}">
+            <div class="sunny-chat__concierge-main">
+              ${introMarkup}
+              ${triggerMarkup}
+              <div class="sunny-chat__concierge-footer">
+                ${suggestionsMarkup}
+                <div class="sunny-chat__branding" aria-label="Powered by Sunny Health AI">
+                  <span class="sunny-chat__branding-mark" aria-hidden="true"></span>
+                  <span class="sunny-chat__branding-copy">
+                    Powered by
+                    <a href="https://sunnyhealth.com" target="_blank" rel="noopener noreferrer" class="sunny-chat__branding-link">Sunny Health AI</a>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        `
+        : triggerMarkup
+    }
   `;
   container.appendChild(root);
 
@@ -475,6 +560,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   const triggerContainer = root.querySelector('.sunny-chat__trigger') as HTMLElement;
   const triggerInput = root.querySelector('.sunny-chat__trigger-input') as HTMLInputElement;
   const triggerSendBtn = triggerContainer.querySelector('.sunny-chat__send-btn') as HTMLButtonElement;
+  const suggestionButtons = Array.from(root.querySelectorAll('.sunny-chat__suggestion-btn')) as HTMLButtonElement[];
 
   let unsubscribes: Array<() => void> = [];
   let latestSnapshot: SunnyAgentsClientSnapshot | null = null;
@@ -1630,6 +1716,25 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     }
   };
 
+  const sendInitialMessage = async (text: string) => {
+    const trimmedText = text.trim();
+    if (!trimmedText) return;
+    modalInput.value = trimmedText;
+    triggerInput.value = '';
+    setExpanded(true);
+    try {
+      const { conversationId } = await client.sendMessage(trimmedText, { conversationId: persistedConversationId });
+      persistedConversationId = conversationId;
+      modalInput.value = '';
+      render();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to send message';
+      console.error('[VanillaChat] Error sending message:', errorMessage);
+      modalInput.value = trimmedText;
+      alert(`Failed to connect: ${errorMessage}\n\nMake sure the WebSocket server is running at the configured URL.`);
+    }
+  };
+
   // Modal send button
   const handleModalSendClick = () => {
     triggerSendRipple(modalSendBtn);
@@ -1643,24 +1748,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
 
   // Send from trigger input (first message)
   const sendFromTrigger = async () => {
-    const text = triggerInput.value.trim();
-    if (!text) return;
-    // Transfer text to modal and open it
-    modalInput.value = text;
-    triggerInput.value = '';
-    setExpanded(true);
-    try {
-      const { conversationId } = await client.sendMessage(text, { conversationId: persistedConversationId });
-      persistedConversationId = conversationId;
-      modalInput.value = '';
-      render();
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to send message';
-      console.error('[VanillaChat] Error sending message:', errorMessage);
-      // Restore the text to the input so user can retry
-      modalInput.value = text;
-      alert(`Failed to connect: ${errorMessage}\n\nMake sure the WebSocket server is running at the configured URL.`);
-    }
+    await sendInitialMessage(triggerInput.value);
   };
 
   // Trigger send button: send message and open modal
@@ -1678,6 +1766,15 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     }
   };
   triggerInput.addEventListener('keydown', handleTriggerKeyDown);
+
+  const suggestionClickHandlers = suggestionButtons.map((button) => {
+    const prompt = button.dataset.suggestionPrompt ?? button.textContent ?? '';
+    const handleSuggestionClick = () => {
+      void sendInitialMessage(prompt);
+    };
+    button.addEventListener('click', handleSuggestionClick);
+    return { button, handleSuggestionClick };
+  });
 
   // Modal input keydown
   const handleModalKeyDown = (e: KeyboardEvent) => {
@@ -1747,6 +1844,9 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     // Clean up trigger event listeners
     triggerInput.removeEventListener('keydown', handleTriggerKeyDown);
     triggerSendBtn.removeEventListener('click', handleTriggerSendClick);
+    suggestionClickHandlers.forEach(({ button, handleSuggestionClick }) => {
+      button.removeEventListener('click', handleSuggestionClick);
+    });
     // Clean up document event listeners
     document.removeEventListener('keydown', handleEscapeKey);
     // Restore body scroll
@@ -1798,8 +1898,13 @@ function ensureStyles() {
     --sunny-color-accent: #22c55e;
     --sunny-color-background: #ffffff;
     --sunny-color-text: #212124;
+    --sunny-color-muted-text: rgba(33, 33, 36, 0.64);
     --sunny-color-danger: #ef4444;
     --sunny-color-danger-hover: #dc2626;
+    --sunny-panel-background: #e8edef;
+    --sunny-chip-background: rgba(255, 255, 255, 0.82);
+    --sunny-chip-border: color-mix(in srgb, var(--sunny-color-primary) 28%, transparent);
+    --sunny-chip-text: var(--sunny-color-secondary);
     
     /* Typography - can be overridden via options */
     --sunny-font-size-base: 14px;
@@ -1809,6 +1914,7 @@ function ensureStyles() {
     --sunny-modal-width: 1390px;
     --sunny-modal-height: 980px;
     --sunny-trigger-max-width: 600px;
+    --sunny-panel-max-width: 1100px;
     
     /* Neutral palette */
     --sunny-gray-50: #fafbfc;
@@ -2050,6 +2156,117 @@ function ensureStyles() {
   }
   .sunny-chat-modal__input:focus {
     box-shadow: 0 0 0 4px var(--sunny-color-primary-ring);
+  }
+
+  /* Embedded concierge panel */
+  .sunny-chat--concierge {
+    width: 100%;
+  }
+  .sunny-chat__concierge-shell {
+    width: 100%;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--sunny-panel-background) 94%, white), var(--sunny-panel-background));
+    border: 1px solid color-mix(in srgb, var(--sunny-chip-border) 45%, transparent);
+    border-radius: 28px;
+    box-shadow: 0 18px 40px rgba(13, 61, 77, 0.08);
+    padding: 28px 30px 24px;
+  }
+  .sunny-chat__concierge-main {
+    max-width: var(--sunny-panel-max-width);
+    margin: 0 auto;
+  }
+  .sunny-chat__concierge-shell--center .sunny-chat__concierge-main {
+    text-align: center;
+  }
+  .sunny-chat__concierge-intro {
+    margin: 0 0 18px;
+    color: var(--sunny-color-secondary);
+    font-size: 1.08em;
+    line-height: 1.6;
+    max-width: 72ch;
+  }
+  .sunny-chat__concierge-intro strong {
+    font-weight: 700;
+    color: var(--sunny-color-text);
+  }
+  .sunny-chat__concierge-shell--center .sunny-chat__concierge-intro {
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .sunny-chat__concierge-footer {
+    margin-top: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px 18px;
+    flex-wrap: wrap;
+  }
+  .sunny-chat__concierge-shell--center .sunny-chat__concierge-footer {
+    justify-content: center;
+  }
+  .sunny-chat__suggestions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .sunny-chat__suggestion-btn {
+    border: 1px solid var(--sunny-chip-border);
+    background: var(--sunny-chip-background);
+    color: var(--sunny-chip-text);
+    border-radius: 999px;
+    padding: 9px 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font: inherit;
+    font-size: 0.95em;
+    line-height: 1.2;
+    cursor: pointer;
+    transition:
+      transform var(--sunny-transition-fast),
+      border-color var(--sunny-transition-fast),
+      background var(--sunny-transition-fast),
+      box-shadow var(--sunny-transition-fast),
+      color var(--sunny-transition-fast);
+    box-shadow: 0 4px 12px rgba(13, 61, 77, 0.06);
+  }
+  .sunny-chat__suggestion-btn:hover {
+    transform: translateY(-1px);
+    border-color: color-mix(in srgb, var(--sunny-color-primary) 45%, transparent);
+    background: color-mix(in srgb, var(--sunny-chip-background) 82%, white);
+    color: var(--sunny-color-text);
+  }
+  .sunny-chat__suggestion-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 4px var(--sunny-color-primary-ring);
+  }
+  .sunny-chat__branding {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--sunny-color-muted-text);
+    font-size: 0.9em;
+  }
+  .sunny-chat__branding-copy {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+  .sunny-chat__branding-mark {
+    width: 14px;
+    height: 14px;
+    border: 1.5px solid currentColor;
+    border-radius: 999px;
+    display: inline-block;
+    opacity: 0.7;
+  }
+  .sunny-chat__branding-link {
+    color: var(--sunny-color-secondary);
+    font-weight: 700;
+    text-decoration: none;
+  }
+  .sunny-chat__branding-link:hover {
+    text-decoration: underline;
   }
 
   /* Trigger Input */
@@ -2832,6 +3049,24 @@ function ensureStyles() {
     }
     .sunny-chat__trigger {
       max-width: 100%;
+    }
+    .sunny-chat__concierge-shell {
+      padding: 20px 16px 18px;
+      border-radius: 20px;
+    }
+    .sunny-chat__concierge-intro {
+      font-size: 1em;
+      margin-bottom: 14px;
+    }
+    .sunny-chat__concierge-footer {
+      align-items: flex-start;
+    }
+    .sunny-chat__suggestions {
+      gap: 8px;
+    }
+    .sunny-chat__suggestion-btn {
+      width: 100%;
+      justify-content: center;
     }
     .sunny-chat__trigger-input,
     .sunny-chat-modal__input {
