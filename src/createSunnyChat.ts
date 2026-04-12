@@ -2,6 +2,7 @@ import { LLMWebSocketManager } from './client/llmWebSocket';
 import { PasswordlessAuthManager } from './client/passwordlessAuth';
 import { attachSunnyChat, type VanillaChatInstance } from './ui/vanillaChat';
 import type {
+  AuthUpgradeProfileSyncData,
   SdkAuthConfig,
   SdkAuthType,
   SunnyAgentsConfig,
@@ -172,6 +173,8 @@ export function createSunnyChat(options: UnifiedSunnyChatOptions): VanillaChatIn
     headerTitle: options.headerTitle,
     placeholder: options.placeholder,
     colors: options.colors,
+    displayMode: options.displayMode,
+    concierge: options.concierge,
     fontSize: options.fontSize,
     fontFamily: options.fontFamily,
     dimensions: options.dimensions,
@@ -184,6 +187,7 @@ export function createSunnyChat(options: UnifiedSunnyChatOptions): VanillaChatIn
       authType: SdkAuthType,
       opts?: {
         idTokenProvider?: () => Promise<string | null>;
+        authUpgradeProfileSync?: AuthUpgradeProfileSyncData | (() => Promise<AuthUpgradeProfileSyncData | null>);
       },
     ) => Promise<void>;
   };
@@ -234,6 +238,7 @@ export function createSunnyChat(options: UnifiedSunnyChatOptions): VanillaChatIn
     newAuthType: SdkAuthType,
     opts?: {
       idTokenProvider?: () => Promise<string | null>;
+      authUpgradeProfileSync?: AuthUpgradeProfileSyncData | (() => Promise<AuthUpgradeProfileSyncData | null>);
     },
   ) => {
     if (newAuthType === 'tokenExchange' && !opts?.idTokenProvider && !options.idTokenProvider) {

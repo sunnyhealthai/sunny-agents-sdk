@@ -219,6 +219,16 @@ export interface VanillaChatColors {
   background?: string;
   /** Main text color. Default: #212124 */
   text?: string;
+  /** Background color for the embedded concierge panel. */
+  panelBackground?: string;
+  /** Muted text color for helper copy and branding. */
+  mutedText?: string;
+  /** Background color for suggestion chips. */
+  chipBackground?: string;
+  /** Border color for suggestion chips and panel accents. */
+  chipBorder?: string;
+  /** Text color for suggestion chips. */
+  chipText?: string;
 }
 
 /**
@@ -231,6 +241,26 @@ export interface VanillaChatDimensions {
   height?: string;
   /** Max width of the collapsed trigger bar. Default: 600px */
   triggerMaxWidth?: string;
+  /** Max width of the concierge panel content area. Default: 1100px */
+  panelMaxWidth?: string;
+}
+
+export type VanillaChatDisplayMode = 'trigger' | 'concierge';
+
+export interface VanillaChatPromptSuggestion {
+  label: string;
+  prompt?: string;
+}
+
+export interface VanillaChatConciergePanel {
+  /** Intro text shown above the trigger input. */
+  introText?: string;
+  /** Optional emphasized text rendered after the intro body. */
+  introStrongText?: string;
+  /** Example prompts rendered as clickable chips. */
+  suggestions?: Array<string | VanillaChatPromptSuggestion>;
+  /** Horizontal alignment for intro copy and footer. */
+  align?: 'left' | 'center';
 }
 
 /**
@@ -350,6 +380,10 @@ export interface UnifiedSunnyChatOptions {
   placeholder?: string;
   /** Theme colors. */
   colors?: VanillaChatColors;
+  /** Display mode for the collapsed widget. Default: "trigger". */
+  displayMode?: VanillaChatDisplayMode;
+  /** Optional embedded concierge panel content. */
+  concierge?: VanillaChatConciergePanel;
   /** Base font size for chat content (e.g. "14px", "1rem"). Default: 14px */
   fontSize?: string;
   /** Font family for the chat UI (e.g. "'Inter', sans-serif"). Default: Lato */
