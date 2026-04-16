@@ -122,10 +122,11 @@ function normalizePromptSuggestions(
 ): VanillaChatPromptSuggestion[] {
   return (suggestions ?? []).map((suggestion) =>
     typeof suggestion === 'string'
-      ? { label: suggestion, prompt: suggestion }
+      ? { label: suggestion, prompt: suggestion, variant: 'default' }
       : {
           label: suggestion.label,
           prompt: suggestion.prompt ?? suggestion.label,
+          variant: suggestion.variant ?? 'default',
         },
   );
 }
@@ -484,7 +485,9 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
               (suggestion) => `
                 <button
                   type="button"
-                  class="sunny-chat__suggestion-btn"
+                  class="sunny-chat__suggestion-btn${
+                    suggestion.variant === 'prominent' ? ' sunny-chat__suggestion-btn--prominent' : ''
+                  }"
                   data-suggestion-prompt="${escapeHtml(suggestion.prompt ?? suggestion.label)}"
                 >
                   ${escapeHtml(suggestion.label)}
@@ -539,7 +542,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
                   <span class="sunny-chat__branding-mark" aria-hidden="true"></span>
                   <span class="sunny-chat__branding-copy">
                     Powered by
-                    <a href="https://sunnyhealth.com" target="_blank" rel="noopener noreferrer" class="sunny-chat__branding-link">Sunny Health AI</a>
+                    <a href="https://sunnyhealthai.com" target="_blank" rel="noopener noreferrer" class="sunny-chat__branding-link">Sunny Health AI</a>
                   </span>
                 </div>
               </div>
@@ -759,40 +762,120 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     return bubble;
   };
 
+  const PROVIDER_SEARCH_LABEL = 'Reviewing real-time provider data for insurance network, location, and preferences';
+  const APPOINTMENT_REQUEST_LABEL = 'Checking final details before starting the appointment request';
+
   const getThinkingStatus = (msg: SunnyAgentMessage): string => {
     const items = msg.outputItems;
-    if (!items || items.length === 0) return 'Thinking';
     // Walk items in reverse to find the most recent activity
-    for (let i = items.length - 1; i >= 0; i--) {
-      const item = items[i];
-      if (!item?.type) continue;
-      if (item.type === 'mcp_approval_request') return 'Awaiting approval';
-      if (item.type === 'mcp_call') return 'Using tools';
-      if (item.type === 'function_call' || item.type === 'function_call_output') {
-        const name = item.name ? `: ${item.name}` : '';
-        return `Calling tool${name}`;
+    if (items && items.length > 0) {
+      for (let i = items.length - 1; i >= 0; i--) {
+        const item = items[i];
+        if (!item?.type) continue;
+        if (item.type === 'mcp_approval_request') {
+          if (item.server_label === 'provider_search') return PROVIDER_SEARCH_LABEL;
+          if (item.server_label === 'request_appointment' || (typeof item.name === 'string' && item.name.includes('request_appointment'))) {
+            return APPOINTMENT_REQUEST_LABEL;
+          }
+          return 'Awaiting approval';
+        }
+        if (item.type === 'mcp_call') {
+          if (item.server_label === 'provider_search') return PROVIDER_SEARCH_LABEL;
+          if (item.server_label === 'request_appointment' || (typeof item.name === 'string' && item.name.includes('request_appointment'))) {
+            return APPOINTMENT_REQUEST_LABEL;
+          }
+          return 'Using tools';
+        }
+        if (item.type === 'function_call' || item.type === 'function_call_output') {
+          if (typeof item.name === 'string' && item.name.includes('provider_search')) return PROVIDER_SEARCH_LABEL;
+          if (typeof item.name === 'string' && item.name.includes('request_appointment')) return APPOINTMENT_REQUEST_LABEL;
+          const name = item.name ? `: ${item.name}` : '';
+          return `Calling tool${name}`;
+        }
+        if (item.type === 'web_search_call') return 'Searching';
+        if (item.type === 'reasoning') return 'Reasoning';
+        if (item.type === 'file_search_call') return 'Searching files';
+        if (item.type === 'code_interpreter_call') return 'Running code';
+        if (item.type === 'computer_call') return 'Using computer';
       }
-      if (item.type === 'web_search_call') return 'Searching';
-      if (item.type === 'reasoning') return 'Reasoning';
-      if (item.type === 'file_search_call') return 'Searching files';
-      if (item.type === 'code_interpreter_call') return 'Running code';
-      if (item.type === 'computer_call') return 'Using computer';
     }
-    return 'Thinking';
+    // Generic thinking: Thinking for first 3s, then Almost there
+    const created = msg.createdAt ? Date.parse(msg.createdAt) : Date.now();
+    const elapsed = Number.isFinite(created) ? Date.now() - created : 0;
+    return elapsed > 3000 ? 'Almost there' : 'Thinking';
   };
 
+  // Secondary phrases cycled beneath the thinking label to give a sense of motion.
+  const THINKING_ROTATION: string[] = ['Looking up', 'Searching', 'Using tools', 'Matching providers'];
+
   const createThinkingOrb = (statusText?: string): HTMLElement => {
-    const label = statusText || 'Thinking';
+    const initialLabel = statusText || 'Thinking';
     const orb = document.createElement('div');
     orb.className = 'sunny-chat__thinking-orb';
     orb.innerHTML = `
-      <div class="sunny-chat__thinking-dots">
-        <div class="sunny-chat__thinking-dot"></div>
-        <div class="sunny-chat__thinking-dot"></div>
-        <div class="sunny-chat__thinking-dot"></div>
+      <div class="sunny-chat__thinking-main">
+        <div class="sunny-chat__thinking-dots">
+          <div class="sunny-chat__thinking-dot"></div>
+          <div class="sunny-chat__thinking-dot"></div>
+          <div class="sunny-chat__thinking-dot"></div>
+        </div>
+        <span class="sunny-chat__thinking-label"></span>
       </div>
-      <span class="sunny-chat__thinking-label">${label}\u2026</span>
+      <div class="sunny-chat__thinking-bar" aria-hidden="true">
+        <div class="sunny-chat__thinking-bar-fill"></div>
+      </div>
     `;
+    const labelEl = orb.querySelector('.sunny-chat__thinking-label') as HTMLElement;
+    const setLabel = (text: string) => {
+      labelEl.textContent = `${text}\u2026`;
+    };
+    setLabel(initialLabel);
+
+    // If the caller passed the generic "Thinking" label, swap to "Almost there"
+    // after 3s so the user sees that we're still working. Tool-specific labels
+    // replace the whole orb via re-render, so this timer only affects idle thinking.
+    if (initialLabel === 'Thinking') {
+      const swapTimer = window.setTimeout(() => {
+        if (orb.isConnected && labelEl.textContent?.startsWith('Thinking')) {
+          setLabel('Almost there');
+        }
+      }, 3000);
+
+      // Also cycle secondary phrases to reinforce activity. We piggyback on the
+      // same timer chain and simply update the label in place.
+      let idx = 0;
+      const rotationTimer = window.setInterval(() => {
+        if (!orb.isConnected) {
+          window.clearInterval(rotationTimer);
+          return;
+        }
+        // Only rotate while the label is still the generic "Thinking…" / "Almost there…" copy.
+        const current = labelEl.textContent || '';
+        if (!current.startsWith('Thinking') && !current.startsWith('Almost there') && !THINKING_ROTATION.some((p) => current.startsWith(p))) {
+          return;
+        }
+        idx = (idx + 1) % THINKING_ROTATION.length;
+        setLabel(THINKING_ROTATION[idx]);
+      }, 2200);
+
+      // Clean up timers when the orb is removed from the DOM.
+      const cleanup = () => {
+        window.clearTimeout(swapTimer);
+        window.clearInterval(rotationTimer);
+      };
+      // MutationObserver on the parent to catch removal.
+      const observer = new MutationObserver(() => {
+        if (!orb.isConnected) {
+          cleanup();
+          observer.disconnect();
+        }
+      });
+      // Observe once the orb is attached; defer to next tick.
+      window.setTimeout(() => {
+        if (orb.parentNode) observer.observe(orb.parentNode, { childList: true });
+      }, 0);
+    }
+
     return orb;
   };
 
@@ -1013,6 +1096,27 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     return card;
   };
 
+  /**
+   * Hints captured from user messages earlier in the session so we can pre-fill
+   * the verification form. Populated in updateVerificationPrefillFromText() when
+   * the user sends chat input.
+   */
+  const verificationPrefill: { email?: string; phone?: string; regionCode?: string } = {};
+
+  const updateVerificationPrefillFromText = (text: string) => {
+    if (!text) return;
+    const emailMatch = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+    if (emailMatch && !verificationPrefill.email) {
+      verificationPrefill.email = emailMatch[0];
+    }
+    // US-style phone: optional +1, area code, 3+4. Non-capturing separators.
+    const phoneMatch = text.match(/(?:\+?1[\s.\-]?)?\(?(\d{3})\)?[\s.\-]?(\d{3})[\s.\-]?(\d{4})/);
+    if (phoneMatch && !verificationPrefill.phone) {
+      verificationPrefill.phone = `${phoneMatch[1]}${phoneMatch[2]}${phoneMatch[3]}`;
+      verificationPrefill.regionCode = '1';
+    }
+  };
+
   const createVerificationFlowComponent = (authManager: PasswordlessAuthManager | undefined, client: SunnyAgentsClient, clientConfig: SunnyAgentsConfig | undefined): HTMLElement => {
     const card = document.createElement('div');
     card.className = 'sunny-verification-flow';
@@ -1088,6 +1192,9 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     emailInput.className = 'sunny-verification-flow__input';
     emailInput.placeholder = 'Enter your email';
     emailInput.disabled = waitingForCode || isSendingCode;
+    if (verificationPrefill.email) {
+      emailInput.value = verificationPrefill.email;
+    }
 
     // Phone row: region dropdown + phone input
     const phoneRow = document.createElement('div');
@@ -1098,11 +1205,12 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     phoneRegionSelect.className = 'sunny-verification-flow__phone-region';
     phoneRegionSelect.disabled = waitingForCode || isSendingCode;
     phoneRegionSelect.setAttribute('aria-label', 'Country or region');
+    const prefilledRegion = verificationPrefill.regionCode ?? '1';
     for (const { code, label } of COUNTRY_CODES) {
       const option = document.createElement('option');
       option.value = code;
       option.textContent = label;
-      if (code === '1' && label.includes('United States')) {
+      if (code === prefilledRegion && label.includes('United States')) {
         option.selected = true;
       }
       phoneRegionSelect.appendChild(option);
@@ -1113,6 +1221,9 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     phoneInput.className = 'sunny-verification-flow__input';
     phoneInput.placeholder = 'Enter your phone number';
     phoneInput.disabled = waitingForCode || isSendingCode;
+    if (verificationPrefill.phone) {
+      phoneInput.value = verificationPrefill.phone;
+    }
 
     phoneRow.appendChild(phoneRegionSelect);
     phoneRow.appendChild(phoneInput);
@@ -1698,9 +1809,44 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     }, 400);
   };
 
+  const FAILURE_COPY = "Hm, something didn't go through. Let's give it another try.";
+
+  const renderFailureBubble = (retry: () => void) => {
+    const row = document.createElement('div');
+    row.className = 'sunny-chat__message sunny-chat__message--assistant sunny-chat__message--failure';
+    const bubble = document.createElement('div');
+    bubble.className = 'sunny-chat__bubble sunny-chat__failure-bubble';
+
+    const copy = document.createElement('p');
+    copy.className = 'sunny-chat__failure-copy';
+    copy.textContent = FAILURE_COPY;
+    bubble.appendChild(copy);
+
+    const retryBtn = document.createElement('button');
+    retryBtn.type = 'button';
+    retryBtn.className = 'sunny-chat__failure-retry';
+    retryBtn.textContent = 'Try again';
+    retryBtn.addEventListener('click', () => {
+      row.remove();
+      retry();
+    });
+    bubble.appendChild(retryBtn);
+
+    row.appendChild(bubble);
+    messagesEl.appendChild(row);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  };
+
+  const showSendFailure = (text: string, retry: () => void) => {
+    // Preserve the user's text in the input so they can edit before retrying.
+    modalInput.value = text;
+    renderFailureBubble(retry);
+  };
+
   const send = async () => {
     const text = modalInput.value.trim();
     if (!text) return;
+    updateVerificationPrefillFromText(text);
     setExpanded(true);
     try {
       const { conversationId } = await client.sendMessage(text, { conversationId: persistedConversationId });
@@ -1710,15 +1856,15 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to send message';
       console.error('[VanillaChat] Error sending message:', errorMessage);
-      // Restore the text to the input so user can retry
       modalInput.value = text;
-      throw error; // Re-throw so handleModalSendClick can show alert
+      throw error; // Re-throw so caller can show the failure bubble.
     }
   };
 
   const sendInitialMessage = async (text: string) => {
     const trimmedText = text.trim();
     if (!trimmedText) return;
+    updateVerificationPrefillFromText(trimmedText);
     modalInput.value = trimmedText;
     triggerInput.value = '';
     setExpanded(true);
@@ -1730,18 +1876,23 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to send message';
       console.error('[VanillaChat] Error sending message:', errorMessage);
-      modalInput.value = trimmedText;
-      alert(`Failed to connect: ${errorMessage}\n\nMake sure the WebSocket server is running at the configured URL.`);
+      showSendFailure(trimmedText, () => void sendInitialMessage(trimmedText));
     }
   };
 
   // Modal send button
   const handleModalSendClick = () => {
+    const attemptedText = modalInput.value.trim();
     triggerSendRipple(modalSendBtn);
     void send().catch((error) => {
       const errorMessage = error instanceof Error ? error.message : 'Failed to send message';
       console.error('[VanillaChat] Error sending message:', errorMessage);
-      alert(`Failed to connect: ${errorMessage}\n\nMake sure the WebSocket server is running at the configured URL.`);
+      showSendFailure(attemptedText, () => {
+        modalInput.value = attemptedText;
+        void send().catch(() => {
+          showSendFailure(attemptedText, () => handleModalSendClick());
+        });
+      });
     });
   };
   modalSendBtn.addEventListener('click', handleModalSendClick);
@@ -2238,6 +2389,25 @@ function ensureStyles() {
   .sunny-chat__suggestion-btn:focus-visible {
     outline: none;
     box-shadow: 0 0 0 4px var(--sunny-color-primary-ring);
+  }
+  .sunny-chat__suggestion-btn--prominent {
+    background: var(--sunny-color-primary);
+    color: #fff;
+    border-color: var(--sunny-color-primary);
+    padding: 12px 18px;
+    font-size: 1em;
+    font-weight: 600;
+    box-shadow: 0 10px 24px color-mix(in srgb, var(--sunny-color-primary) 35%, transparent);
+  }
+  .sunny-chat__suggestion-btn--prominent:hover {
+    transform: translateY(-1px);
+    background: color-mix(in srgb, var(--sunny-color-primary) 88%, black);
+    border-color: color-mix(in srgb, var(--sunny-color-primary) 88%, black);
+    color: #fff;
+  }
+  .sunny-chat__suggestion-btn--prominent:focus-visible {
+    box-shadow: 0 0 0 4px var(--sunny-color-primary-ring),
+      0 10px 24px color-mix(in srgb, var(--sunny-color-primary) 35%, transparent);
   }
   .sunny-chat__branding {
     display: inline-flex;
@@ -2793,8 +2963,12 @@ function ensureStyles() {
     gap: 8px;
   }
   .sunny-verification-flow__phone-region {
-    min-width: 140px;
-    padding: 12px 16px;
+    /* Area-code selector sits to the left of the phone number field and
+       should be narrow so the phone row width matches the email row. */
+    flex: 0 0 auto;
+    width: 96px;
+    min-width: 0;
+    padding: 12px 10px;
     border: 1px solid var(--sunny-gray-300);
     border-radius: 8px;
     font-size: 1.071em;
@@ -2947,12 +3121,42 @@ function ensureStyles() {
   }
   .sunny-chat__thinking-orb {
     display: inline-flex;
-    align-items: center;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
     padding: 12px 18px;
     background: var(--sunny-color-background);
     border: 1px solid var(--sunny-gray-200);
     border-radius: 14px 14px 14px 4px;
     box-shadow: var(--sunny-shadow-sm);
+    min-width: 220px;
+  }
+  .sunny-chat__thinking-main {
+    display: inline-flex;
+    align-items: center;
+  }
+  .sunny-chat__thinking-bar {
+    position: relative;
+    width: 100%;
+    height: 3px;
+    background: var(--sunny-gray-100);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .sunny-chat__thinking-bar-fill {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 40%;
+    background: linear-gradient(90deg, var(--sunny-color-primary), var(--sunny-color-primary-muted));
+    border-radius: 3px;
+    animation: sunny-thinking-bar-slide 1.6s ease-in-out infinite;
+  }
+  @keyframes sunny-thinking-bar-slide {
+    0%   { left: -40%; width: 40%; }
+    50%  { left: 30%; width: 55%; }
+    100% { left: 100%; width: 40%; }
   }
   .sunny-chat__thinking-dots {
     display: flex;
@@ -2983,6 +3187,41 @@ function ensureStyles() {
   /* Message Streaming Indicator */
   .sunny-chat__message--streaming {
     border-color: var(--sunny-color-primary-border);
+  }
+
+  /* Failure bubble (shown when a send fails) */
+  .sunny-chat__failure-bubble {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 16px;
+    background: color-mix(in srgb, var(--sunny-color-error, #d14343) 8%, var(--sunny-color-background));
+    border: 1px solid color-mix(in srgb, var(--sunny-color-error, #d14343) 35%, transparent);
+    border-radius: 14px 14px 14px 4px;
+    color: var(--sunny-color-text);
+    max-width: 80%;
+  }
+  .sunny-chat__failure-copy {
+    margin: 0;
+    font-size: 0.95em;
+    line-height: 1.4;
+  }
+  .sunny-chat__failure-retry {
+    align-self: flex-start;
+    padding: 6px 12px;
+    border: 1px solid var(--sunny-color-error, #d14343);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--sunny-color-error, #d14343);
+    font: inherit;
+    font-size: 0.85em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background var(--sunny-transition-fast), color var(--sunny-transition-fast);
+  }
+  .sunny-chat__failure-retry:hover {
+    background: var(--sunny-color-error, #d14343);
+    color: #fff;
   }
 
   /* Send Button Ripple */

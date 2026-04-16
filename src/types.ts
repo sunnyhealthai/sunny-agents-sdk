@@ -250,6 +250,12 @@ export type VanillaChatDisplayMode = 'trigger' | 'concierge';
 export interface VanillaChatPromptSuggestion {
   label: string;
   prompt?: string;
+  /**
+   * Visual emphasis for the suggestion chip.
+   * - `default` (or omitted): standard outlined chip
+   * - `prominent`: filled primary-color chip, used to draw the user toward the preferred action
+   */
+  variant?: 'default' | 'prominent';
 }
 
 export interface VanillaChatConciergePanel {
