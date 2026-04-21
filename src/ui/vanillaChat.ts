@@ -6,6 +6,7 @@ import type {
   DoctorProfileArtifact,
   ProviderResult,
   ProviderSearchResultsArtifact,
+  SchedulingProgressArtifact,
   SdkAuthType,
   SunnyAgentMessage,
   SunnyAgentMessageItem,
@@ -75,6 +76,16 @@ export interface VanillaChatOptions {
    * When provided, verification flow tags in messages will render a passwordless login form.
    */
   passwordlessAuth?: PasswordlessAuthManager;
+  /**
+   * Optional values used to pre-fill the verification flow inputs. Useful when the host
+   * has already collected an email or phone earlier in the flow and wants to save the user
+   * from re-typing. The phone value should be digits only (region code is selected via the
+   * country dropdown).
+   */
+  verificationPrefill?: {
+    email?: string;
+    phone?: string;
+  };
 }
 
 export interface VanillaChatInstance {
@@ -107,6 +118,8 @@ const DOCTOR_PROFILE_START = '{doctor_profile}';
 const DOCTOR_PROFILE_END = '{/doctor_profile}';
 const VERIFICATION_FLOW_START = '{verification_flow}';
 const VERIFICATION_FLOW_END = '{/verification_flow}';
+const SCHEDULING_PROGRESS_START = '{scheduling_progress}';
+const SCHEDULING_PROGRESS_END = '{/scheduling_progress}';
 
 function escapeHtml(value: string): string {
   return value
@@ -126,6 +139,7 @@ function normalizePromptSuggestions(
       : {
           label: suggestion.label,
           prompt: suggestion.prompt ?? suggestion.label,
+          emphasis: suggestion.emphasis,
         },
   );
 }
@@ -399,7 +413,8 @@ type ArtifactSegment =
   | { type: 'minimal_profile'; data: any }
   | { type: 'legacy_profile'; data: any }
   | { type: 'provider_search_results'; data: ProviderSearchResultsArtifact }
-  | { type: 'verification_flow'; action: string };
+  | { type: 'verification_flow'; action: string }
+  | { type: 'scheduling_progress'; data: SchedulingProgressArtifact };
 type ApprovalState = 'approved' | 'rejected';
 
 interface ProviderCardViewModel {
@@ -428,6 +443,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     fontFamily,
     dimensions,
     passwordlessAuth: initialPasswordlessAuth,
+    verificationPrefill,
   } = options;
 
   let passwordlessAuth = initialPasswordlessAuth;
@@ -480,17 +496,21 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     ? `
         <div class="sunny-chat__suggestions" aria-label="Example prompts">
           ${normalizedSuggestions
-            .map(
-              (suggestion) => `
+            .map((suggestion) => {
+              const classes = ['sunny-chat__suggestion-btn'];
+              if (suggestion.emphasis === 'primary') {
+                classes.push('sunny-chat__suggestion-btn--primary');
+              }
+              return `
                 <button
                   type="button"
-                  class="sunny-chat__suggestion-btn"
+                  class="${classes.join(' ')}"
                   data-suggestion-prompt="${escapeHtml(suggestion.prompt ?? suggestion.label)}"
                 >
                   ${escapeHtml(suggestion.label)}
                 </button>
-              `,
-            )
+              `;
+            })
             .join('')}
         </div>
       `
@@ -514,6 +534,12 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
             <path d="M6 6l12 12M6 18L18 6" stroke-linecap="round" />
           </svg>
         </button>
+        <div class="sunny-chat__progress" role="status" aria-live="polite" hidden>
+          <div class="sunny-chat__progress-label"></div>
+          <div class="sunny-chat__progress-track">
+            <div class="sunny-chat__progress-fill"></div>
+          </div>
+        </div>
         <div class="sunny-chat__messages" aria-live="polite"></div>
         <div class="sunny-chat-modal__composer">
           <input type="text" class="sunny-chat-modal__input" placeholder="${escapeHtml(placeholder)}" aria-label="${escapeHtml(placeholder)}" />
@@ -561,11 +587,41 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   const triggerInput = root.querySelector('.sunny-chat__trigger-input') as HTMLInputElement;
   const triggerSendBtn = triggerContainer.querySelector('.sunny-chat__send-btn') as HTMLButtonElement;
   const suggestionButtons = Array.from(root.querySelectorAll('.sunny-chat__suggestion-btn')) as HTMLButtonElement[];
+  const progressEl = root.querySelector('.sunny-chat__progress') as HTMLElement;
+  const progressLabelEl = progressEl.querySelector('.sunny-chat__progress-label') as HTMLElement;
+  const progressFillEl = progressEl.querySelector('.sunny-chat__progress-fill') as HTMLElement;
 
   let unsubscribes: Array<() => void> = [];
   let latestSnapshot: SunnyAgentsClientSnapshot | null = null;
   let isExpanded = false;
   let isClosing = false; // Flag to prevent immediate reopen on focus
+  let latestProgress: SchedulingProgressArtifact | null = null;
+  let progressConversationId: string | null = null;
+
+  const applySchedulingProgress = (data: SchedulingProgressArtifact) => {
+    if (data.completed) {
+      latestProgress = null;
+      progressEl.hidden = true;
+      return;
+    }
+    const total = Math.max(1, data.total_steps);
+    const current = Math.min(Math.max(1, data.current_step), total);
+    const pct = Math.round((current / total) * 100);
+    const labelText = data.step_label
+      ? `Step ${current} of ${total}: ${data.step_label}`
+      : `Step ${current} of ${total}`;
+    progressLabelEl.textContent = labelText;
+    progressFillEl.style.width = `${pct}%`;
+    progressEl.hidden = false;
+    latestProgress = data;
+  };
+
+  const clearSchedulingProgress = () => {
+    latestProgress = null;
+    progressEl.hidden = true;
+    progressLabelEl.textContent = '';
+    progressFillEl.style.width = '0%';
+  };
 
   // Send-button loading spinner for tokenExchange users (anonymous === false)
   if (!anonymous) {
@@ -698,6 +754,13 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     streamingBubbleEl = null;
     streamingMsgId = currentStreamId;
     lastRenderedMessageCount = visibleMessages.length;
+    // Clear pinned progress when the active conversation changes — progress
+    // belongs to a flow, not the widget. Messages in the new conversation will
+    // re-emit progress artifacts as they re-render.
+    if (progressConversationId !== convo.id) {
+      clearSchedulingProgress();
+      progressConversationId = convo.id;
+    }
     lastRenderedConvoId = convo.id;
 
     for (const msg of visibleMessages) {
@@ -873,7 +936,11 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
           container.appendChild(card);
         });
       } else if (segment.type === 'verification_flow') {
-        container.appendChild(createVerificationFlowComponent(passwordlessAuth, client, config));
+        container.appendChild(createVerificationFlowComponent(passwordlessAuth, client, config, verificationPrefill));
+      } else if (segment.type === 'scheduling_progress') {
+        // Progress artifacts render as a pinned bar at the top of the modal,
+        // not inline in the bubble. Just update state here.
+        applySchedulingProgress(segment.data);
       }
     }
   };
@@ -1042,7 +1109,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     return card;
   };
 
-  const createVerificationFlowComponent = (authManager: PasswordlessAuthManager | undefined, client: SunnyAgentsClient, clientConfig: SunnyAgentsConfig | undefined): HTMLElement => {
+  const createVerificationFlowComponent = (authManager: PasswordlessAuthManager | undefined, client: SunnyAgentsClient, clientConfig: SunnyAgentsConfig | undefined, prefill?: { email?: string; phone?: string }): HTMLElement => {
     const card = document.createElement('div');
     card.className = 'sunny-verification-flow';
 
@@ -1117,6 +1184,9 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     emailInput.className = 'sunny-verification-flow__input';
     emailInput.placeholder = 'Enter your email';
     emailInput.disabled = waitingForCode || isSendingCode;
+    if (prefill?.email) {
+      emailInput.value = prefill.email;
+    }
 
     // Phone row: region dropdown + phone input
     const phoneRow = document.createElement('div');
@@ -1142,6 +1212,9 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     phoneInput.className = 'sunny-verification-flow__input';
     phoneInput.placeholder = 'Enter your phone number';
     phoneInput.disabled = waitingForCode || isSendingCode;
+    if (prefill?.phone) {
+      phoneInput.value = prefill.phone;
+    }
 
     phoneRow.appendChild(phoneRegionSelect);
     phoneRow.appendChild(phoneInput);
@@ -2061,6 +2134,38 @@ function ensureStyles() {
     height: 18px;
   }
 
+  /* Pinned scheduling progress bar */
+  .sunny-chat__progress {
+    padding: 40px 24px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: var(--sunny-color-background);
+    border-bottom: 1px solid var(--sunny-gray-100);
+  }
+  .sunny-chat__progress[hidden] {
+    display: none;
+  }
+  .sunny-chat__progress-label {
+    font-size: 0.82em;
+    color: var(--sunny-color-muted-text);
+    font-weight: 500;
+  }
+  .sunny-chat__progress-track {
+    width: 100%;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--sunny-gray-100);
+    overflow: hidden;
+  }
+  .sunny-chat__progress-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--sunny-color-primary);
+    border-radius: 999px;
+    transition: width var(--sunny-transition-fast);
+  }
+
   /* Messages Area */
   .sunny-chat__messages {
     flex: 1;
@@ -2267,6 +2372,20 @@ function ensureStyles() {
   .sunny-chat__suggestion-btn:focus-visible {
     outline: none;
     box-shadow: 0 0 0 4px var(--sunny-color-primary-ring);
+  }
+  .sunny-chat__suggestion-btn--primary {
+    background: var(--sunny-color-primary);
+    border-color: var(--sunny-color-primary);
+    color: #ffffff;
+    font-weight: 600;
+    padding: 11px 18px;
+    box-shadow: 0 6px 18px color-mix(in srgb, var(--sunny-color-primary) 35%, transparent);
+  }
+  .sunny-chat__suggestion-btn--primary:hover {
+    transform: translateY(-1px);
+    background: var(--sunny-color-primary-hover, var(--sunny-color-primary));
+    border-color: var(--sunny-color-primary-hover, var(--sunny-color-primary));
+    color: #ffffff;
   }
   .sunny-chat__branding {
     display: inline-flex;
@@ -3188,7 +3307,7 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
   let cursor = 0;
 
   // Find all tag positions
-  type TagMatch = { type: 'expanded' | 'minimal' | 'legacy' | 'provider_search_results' | 'verification_flow'; start: number; end: number; data?: any; action?: string };
+  type TagMatch = { type: 'expanded' | 'minimal' | 'legacy' | 'provider_search_results' | 'verification_flow' | 'scheduling_progress'; start: number; end: number; data?: any; action?: string };
   const tagMatches: TagMatch[] = [];
 
   // Find raw JSON doctor profile objects (ChatArtifact format with item_type: "doctor_profile")
@@ -3329,6 +3448,45 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
     verificationCursor = end + VERIFICATION_FLOW_END.length;
   }
 
+  // Find scheduling progress tags. Body is a JSON object matching
+  // SchedulingProgressArtifact. Malformed payloads are dropped silently so a
+  // bad emission from the agent doesn't break the whole message render.
+  let progressCursor = 0;
+  while (progressCursor < text.length) {
+    const start = text.indexOf(SCHEDULING_PROGRESS_START, progressCursor);
+    if (start === -1) break;
+    const contentStart = start + SCHEDULING_PROGRESS_START.length;
+    const end = text.indexOf(SCHEDULING_PROGRESS_END, contentStart);
+    if (end === -1) break;
+    const body = text.slice(contentStart, end).trim();
+    try {
+      const parsed = JSON.parse(body);
+      if (
+        parsed &&
+        typeof parsed === 'object' &&
+        typeof parsed.current_step === 'number' &&
+        typeof parsed.total_steps === 'number'
+      ) {
+        tagMatches.push({
+          type: 'scheduling_progress',
+          start,
+          end: end + SCHEDULING_PROGRESS_END.length,
+          data: parsed as SchedulingProgressArtifact,
+        });
+      }
+    } catch {
+      // Ignore malformed JSON; the tag span is still consumed below so it
+      // doesn't leak into the inline text.
+      tagMatches.push({
+        type: 'scheduling_progress',
+        start,
+        end: end + SCHEDULING_PROGRESS_END.length,
+        data: null,
+      });
+    }
+    progressCursor = end + SCHEDULING_PROGRESS_END.length;
+  }
+
   // Sort matches by position
   tagMatches.sort((a, b) => a.start - b.start);
 
@@ -3350,6 +3508,8 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
       segments.push({ type: 'provider_search_results', data: match.data });
     } else if (match.type === 'verification_flow') {
       segments.push({ type: 'verification_flow', action: match.action || 'init' });
+    } else if (match.type === 'scheduling_progress' && match.data) {
+      segments.push({ type: 'scheduling_progress', data: match.data });
     }
 
     cursor = match.end;
