@@ -250,6 +250,8 @@ export type VanillaChatDisplayMode = 'trigger' | 'concierge';
 export interface VanillaChatPromptSuggestion {
   label: string;
   prompt?: string;
+  /** Visual emphasis. 'primary' renders the chip as a solid, conspicuous call-to-action. */
+  emphasis?: 'primary';
 }
 
 export interface VanillaChatConciergePanel {
