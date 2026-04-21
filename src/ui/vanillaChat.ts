@@ -75,6 +75,16 @@ export interface VanillaChatOptions {
    * When provided, verification flow tags in messages will render a passwordless login form.
    */
   passwordlessAuth?: PasswordlessAuthManager;
+  /**
+   * Optional values used to pre-fill the verification flow inputs. Useful when the host
+   * has already collected an email or phone earlier in the flow and wants to save the user
+   * from re-typing. The phone value should be digits only (region code is selected via the
+   * country dropdown).
+   */
+  verificationPrefill?: {
+    email?: string;
+    phone?: string;
+  };
 }
 
 export interface VanillaChatInstance {
@@ -429,6 +439,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     fontFamily,
     dimensions,
     passwordlessAuth: initialPasswordlessAuth,
+    verificationPrefill,
   } = options;
 
   let passwordlessAuth = initialPasswordlessAuth;
@@ -878,7 +889,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
           container.appendChild(card);
         });
       } else if (segment.type === 'verification_flow') {
-        container.appendChild(createVerificationFlowComponent(passwordlessAuth, client, config));
+        container.appendChild(createVerificationFlowComponent(passwordlessAuth, client, config, verificationPrefill));
       }
     }
   };
@@ -1047,7 +1058,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     return card;
   };
 
-  const createVerificationFlowComponent = (authManager: PasswordlessAuthManager | undefined, client: SunnyAgentsClient, clientConfig: SunnyAgentsConfig | undefined): HTMLElement => {
+  const createVerificationFlowComponent = (authManager: PasswordlessAuthManager | undefined, client: SunnyAgentsClient, clientConfig: SunnyAgentsConfig | undefined, prefill?: { email?: string; phone?: string }): HTMLElement => {
     const card = document.createElement('div');
     card.className = 'sunny-verification-flow';
 
@@ -1122,6 +1133,9 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     emailInput.className = 'sunny-verification-flow__input';
     emailInput.placeholder = 'Enter your email';
     emailInput.disabled = waitingForCode || isSendingCode;
+    if (prefill?.email) {
+      emailInput.value = prefill.email;
+    }
 
     // Phone row: region dropdown + phone input
     const phoneRow = document.createElement('div');
@@ -1147,6 +1161,9 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     phoneInput.className = 'sunny-verification-flow__input';
     phoneInput.placeholder = 'Enter your phone number';
     phoneInput.disabled = waitingForCode || isSendingCode;
+    if (prefill?.phone) {
+      phoneInput.value = prefill.phone;
+    }
 
     phoneRow.appendChild(phoneRegionSelect);
     phoneRow.appendChild(phoneInput);
