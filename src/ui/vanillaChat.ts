@@ -126,6 +126,7 @@ function normalizePromptSuggestions(
       : {
           label: suggestion.label,
           prompt: suggestion.prompt ?? suggestion.label,
+          emphasis: suggestion.emphasis,
         },
   );
 }
@@ -480,17 +481,21 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     ? `
         <div class="sunny-chat__suggestions" aria-label="Example prompts">
           ${normalizedSuggestions
-            .map(
-              (suggestion) => `
+            .map((suggestion) => {
+              const classes = ['sunny-chat__suggestion-btn'];
+              if (suggestion.emphasis === 'primary') {
+                classes.push('sunny-chat__suggestion-btn--primary');
+              }
+              return `
                 <button
                   type="button"
-                  class="sunny-chat__suggestion-btn"
+                  class="${classes.join(' ')}"
                   data-suggestion-prompt="${escapeHtml(suggestion.prompt ?? suggestion.label)}"
                 >
                   ${escapeHtml(suggestion.label)}
                 </button>
-              `,
-            )
+              `;
+            })
             .join('')}
         </div>
       `
@@ -2267,6 +2272,20 @@ function ensureStyles() {
   .sunny-chat__suggestion-btn:focus-visible {
     outline: none;
     box-shadow: 0 0 0 4px var(--sunny-color-primary-ring);
+  }
+  .sunny-chat__suggestion-btn--primary {
+    background: var(--sunny-color-primary);
+    border-color: var(--sunny-color-primary);
+    color: #ffffff;
+    font-weight: 600;
+    padding: 11px 18px;
+    box-shadow: 0 6px 18px color-mix(in srgb, var(--sunny-color-primary) 35%, transparent);
+  }
+  .sunny-chat__suggestion-btn--primary:hover {
+    transform: translateY(-1px);
+    background: var(--sunny-color-primary-hover, var(--sunny-color-primary));
+    border-color: var(--sunny-color-primary-hover, var(--sunny-color-primary));
+    color: #ffffff;
   }
   .sunny-chat__branding {
     display: inline-flex;
