@@ -539,7 +539,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
                   <span class="sunny-chat__branding-mark" aria-hidden="true"></span>
                   <span class="sunny-chat__branding-copy">
                     Powered by
-                    <a href="https://sunnyhealth.com" target="_blank" rel="noopener noreferrer" class="sunny-chat__branding-link">Sunny Health AI</a>
+                    <a href="https://sunnyhealthai.com" target="_blank" rel="noopener noreferrer" class="sunny-chat__branding-link">Sunny Health AI</a>
                   </span>
                 </div>
               </div>
@@ -759,6 +759,21 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     return bubble;
   };
 
+  const PROVIDER_SEARCH_TOOLS = new Set([
+    'search_providers',
+    'search_provider_info',
+    'search_providers_by_specialty_with_cost',
+  ]);
+  const APPOINTMENT_REQUEST_TOOLS = new Set([
+    'request_appointment',
+    'schedule_appointment',
+  ]);
+  const PROVIDER_SEARCH_STATUS =
+    'Reviewing real-time provider data for insurance network, location, and preferences';
+  const APPOINTMENT_REQUEST_STATUS = 'Checking final details before starting the appointment request';
+  const ALMOST_THERE_DELAY_MS = 3000;
+  const GENERIC_SEND_FAILURE_MESSAGE = "Hm, something didn't go through. Let's give it another try.";
+
   const getThinkingStatus = (msg: SunnyAgentMessage): string => {
     const items = msg.outputItems;
     if (!items || items.length === 0) return 'Thinking';
@@ -767,10 +782,14 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       const item = items[i];
       if (!item?.type) continue;
       if (item.type === 'mcp_approval_request') return 'Awaiting approval';
-      if (item.type === 'mcp_call') return 'Using tools';
-      if (item.type === 'function_call' || item.type === 'function_call_output') {
-        const name = item.name ? `: ${item.name}` : '';
-        return `Calling tool${name}`;
+      if (
+        item.type === 'function_call' ||
+        item.type === 'function_call_output' ||
+        item.type === 'mcp_call'
+      ) {
+        if (item.name && PROVIDER_SEARCH_TOOLS.has(item.name)) return PROVIDER_SEARCH_STATUS;
+        if (item.name && APPOINTMENT_REQUEST_TOOLS.has(item.name)) return APPOINTMENT_REQUEST_STATUS;
+        return 'Thinking';
       }
       if (item.type === 'web_search_call') return 'Searching';
       if (item.type === 'reasoning') return 'Reasoning';
@@ -793,6 +812,16 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       </div>
       <span class="sunny-chat__thinking-label">${label}\u2026</span>
     `;
+    if (label === 'Thinking') {
+      const labelEl = orb.querySelector('.sunny-chat__thinking-label') as HTMLElement | null;
+      if (labelEl) {
+        setTimeout(() => {
+          if (labelEl.isConnected && labelEl.textContent === 'Thinking\u2026') {
+            labelEl.textContent = 'Almost there\u2026';
+          }
+        }, ALMOST_THERE_DELAY_MS);
+      }
+    }
     return orb;
   };
 
@@ -1731,7 +1760,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       const errorMessage = error instanceof Error ? error.message : 'Failed to send message';
       console.error('[VanillaChat] Error sending message:', errorMessage);
       modalInput.value = trimmedText;
-      alert(`Failed to connect: ${errorMessage}\n\nMake sure the WebSocket server is running at the configured URL.`);
+      alert(GENERIC_SEND_FAILURE_MESSAGE);
     }
   };
 
@@ -1741,7 +1770,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     void send().catch((error) => {
       const errorMessage = error instanceof Error ? error.message : 'Failed to send message';
       console.error('[VanillaChat] Error sending message:', errorMessage);
-      alert(`Failed to connect: ${errorMessage}\n\nMake sure the WebSocket server is running at the configured URL.`);
+      alert(GENERIC_SEND_FAILURE_MESSAGE);
     });
   };
   modalSendBtn.addEventListener('click', handleModalSendClick);
@@ -2793,8 +2822,8 @@ function ensureStyles() {
     gap: 8px;
   }
   .sunny-verification-flow__phone-region {
-    min-width: 140px;
-    padding: 12px 16px;
+    min-width: 88px;
+    padding: 12px 12px;
     border: 1px solid var(--sunny-gray-300);
     border-radius: 8px;
     font-size: 1.071em;
