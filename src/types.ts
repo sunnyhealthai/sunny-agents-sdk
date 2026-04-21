@@ -254,6 +254,26 @@ export interface VanillaChatPromptSuggestion {
   emphasis?: 'primary';
 }
 
+/**
+ * Pinned progress indicator emitted by the agent during multi-step flows
+ * (e.g., scheduling). Encoded in message text between
+ * `{scheduling_progress}` and `{/scheduling_progress}` tags as a JSON body.
+ * The SDK hides the tag from the inline bubble and renders it as a pinned
+ * progress bar at the top of the modal. Latest emission wins.
+ */
+export interface SchedulingProgressArtifact {
+  /** 1-indexed current step within the flow. */
+  current_step: number;
+  /** Total number of steps in the flow. */
+  total_steps: number;
+  /** Optional short label describing the current step (e.g., "Insurance details"). */
+  step_label?: string;
+  /** Optional flow identifier (e.g., "schedule", "cancel"). */
+  flow?: string;
+  /** When true, the SDK hides the progress bar. Use to close out the flow. */
+  completed?: boolean;
+}
+
 export interface VanillaChatConciergePanel {
   /** Intro text shown above the trigger input. */
   introText?: string;
