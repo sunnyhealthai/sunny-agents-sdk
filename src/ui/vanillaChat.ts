@@ -120,6 +120,8 @@ const VERIFICATION_FLOW_START = '{verification_flow}';
 const VERIFICATION_FLOW_END = '{/verification_flow}';
 const SCHEDULING_PROGRESS_START = '{scheduling_progress}';
 const SCHEDULING_PROGRESS_END = '{/scheduling_progress}';
+const EMAIL_CONFIRM_START = '{email_confirm}';
+const EMAIL_CONFIRM_END = '{/email_confirm}';
 
 function escapeHtml(value: string): string {
   return value
@@ -414,7 +416,8 @@ type ArtifactSegment =
   | { type: 'legacy_profile'; data: any }
   | { type: 'provider_search_results'; data: ProviderSearchResultsArtifact }
   | { type: 'verification_flow'; action: string; phone?: string; email?: string }
-  | { type: 'scheduling_progress'; data: SchedulingProgressArtifact };
+  | { type: 'scheduling_progress'; data: SchedulingProgressArtifact }
+  | { type: 'email_confirm'; email: string };
 type ApprovalState = 'approved' | 'rejected';
 
 interface ProviderCardViewModel {
@@ -611,7 +614,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       ? `Step ${current} of ${total}: ${data.step_label}`
       : `Step ${current} of ${total}`;
     progressLabelEl.textContent = labelText;
-    progressFillEl.style.width = `${pct}%`;
+    progressFillEl.style.transform = `translateX(-${100 - pct}%)`;
     progressEl.hidden = false;
     latestProgress = data;
   };
@@ -620,7 +623,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     latestProgress = null;
     progressEl.hidden = true;
     progressLabelEl.textContent = '';
-    progressFillEl.style.width = '0%';
+    progressFillEl.style.transform = 'translateX(-100%)';
   };
 
   // Send-button loading spinner for tokenExchange users (anonymous === false)
@@ -942,6 +945,8 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
         // Progress artifacts render as a pinned bar at the top of the modal,
         // not inline in the bubble. Just update state here.
         applySchedulingProgress(segment.data);
+      } else if (segment.type === 'email_confirm') {
+        container.appendChild(createEmailConfirmCard(segment.email, client));
       }
     }
   };
@@ -1138,7 +1143,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     if (authManager.isAuthenticated()) {
       const successMessage = document.createElement('div');
       successMessage.className = 'sunny-verification-flow__success';
-      successMessage.textContent = '✓ Verification successful! You are now authenticated.';
+      successMessage.textContent = "All set — you're verified.";
       card.appendChild(successMessage);
       return card;
     }
@@ -1308,6 +1313,80 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
 
     codeGroup.appendChild(codeInputsContainer);
 
+    // Resend code link — appears under the code inputs once a code has been
+    // sent. Rate-limited by a 30-second countdown so users can't hammer the
+    // OTP endpoint.
+    const resendRow = document.createElement('div');
+    resendRow.className = 'sunny-verification-flow__resend-row';
+    const resendLink = document.createElement('button');
+    resendLink.type = 'button';
+    resendLink.className = 'sunny-verification-flow__resend';
+    resendLink.textContent = 'Resend code';
+    resendLink.disabled = true;
+    resendRow.appendChild(resendLink);
+    codeGroup.appendChild(resendRow);
+
+    let resendTimerSeconds = 0;
+    let resendTimerInterval: ReturnType<typeof setInterval> | null = null;
+    const stopResendTimer = () => {
+      if (resendTimerInterval) {
+        clearInterval(resendTimerInterval);
+        resendTimerInterval = null;
+      }
+    };
+    const startResendTimer = () => {
+      stopResendTimer();
+      resendTimerSeconds = 30;
+      resendLink.disabled = true;
+      resendLink.textContent = `Resend code in ${resendTimerSeconds}s`;
+      resendTimerInterval = setInterval(() => {
+        // Auto-cleanup if the card was detached from the DOM.
+        if (!document.body.contains(resendLink)) {
+          stopResendTimer();
+          return;
+        }
+        resendTimerSeconds -= 1;
+        if (resendTimerSeconds <= 0) {
+          stopResendTimer();
+          resendLink.disabled = false;
+          resendLink.textContent = 'Resend code';
+        } else {
+          resendLink.textContent = `Resend code in ${resendTimerSeconds}s`;
+        }
+      }, 1000);
+    };
+
+    resendLink.addEventListener('click', async () => {
+      if (resendLink.disabled) return;
+      if (isSendingCode || isVerifyingCode) return;
+      if (!currentPhone && !currentEmail) return;
+      isSendingCode = true;
+      resendLink.disabled = true;
+      hideStatus();
+      try {
+        if (currentPhone) {
+          await authManager.startLogin({ phoneNumber: currentPhone });
+          showStatus(`New code texted to ${formatPhoneForDisplay(currentPhone)}.`, 'success');
+        } else if (currentEmail) {
+          await authManager.startLogin({ email: currentEmail });
+          showStatus(`New code sent to ${currentEmail}.`, 'success');
+        }
+        clearCodeInputs();
+        codeInputs[0]?.focus();
+        startResendTimer();
+      } catch (error) {
+        showStatus(
+          `Failed to resend: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'error',
+        );
+        resendLink.disabled = false;
+        resendLink.textContent = 'Resend code';
+      } finally {
+        isSendingCode = false;
+        updateUI();
+      }
+    });
+
     // Helper function to get the full code from all inputs
     const getCode = (): string => {
       return codeInputs.map(input => input.value).join('');
@@ -1331,11 +1410,12 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     actionButton.textContent = 'Send Code';
     actionButton.disabled = isSendingCode || isVerifyingCode;
 
-    // Success message (hidden initially)
+    // Success message (hidden initially — text is replaced with channel-aware
+    // copy in the verify success branch before it becomes visible).
     const successMessage = document.createElement('div');
     successMessage.className = 'sunny-verification-flow__success';
     successMessage.style.display = 'none';
-    successMessage.textContent = '✓ Verification successful! You are now authenticated.';
+    successMessage.textContent = "All set — you're verified.";
 
     const updateUI = () => {
       if (waitingForCode) {
@@ -1408,6 +1488,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
           updateUI();
           clearCodeInputs();
           codeInputs[0].focus();
+          startResendTimer();
         } catch (error) {
           showStatus(`Failed to send code: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
           isSendingCode = false;
@@ -1441,10 +1522,16 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
             client.setIdTokenProvider(() => Promise.resolve(idToken));
           }
 
-          // Show success
+          // Show success — channel-aware copy so phone users see phone text.
+          successMessage.textContent = currentPhone
+            ? 'All set — your phone is verified.'
+            : currentEmail
+            ? 'All set — your email is verified.'
+            : "All set — you're verified.";
           successMessage.style.display = 'block';
           form.style.display = 'none';
           showStatus('', 'success');
+          stopResendTimer();
 
           // Send hidden message to LLM indicating successful authentication
           // Wait a brief moment for migration events to be processed if migrateHistory is enabled
@@ -1494,6 +1581,9 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       currentPhone = null;
       clearCodeInputs();
       hideStatus();
+      stopResendTimer();
+      resendLink.textContent = 'Resend code';
+      resendLink.disabled = true;
       methodToggle.style.display = 'flex';
       if (autoStartedPhone) {
         useEmail = false;
@@ -1562,6 +1652,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
           updateUI();
           clearCodeInputs();
           codeInputs[0]?.focus();
+          startResendTimer();
         } catch (error) {
           // Auto-send failed — fall back to the manual input UI on the
           // channel the agent targeted so the user can correct and retry.
@@ -1584,6 +1675,104 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       }, 0);
     }
 
+    return card;
+  };
+
+  const createEmailConfirmCard = (email: string, client: SunnyAgentsClient): HTMLElement => {
+    const card = document.createElement('div');
+    card.className = 'sunny-email-confirm';
+
+    const label = document.createElement('div');
+    label.className = 'sunny-email-confirm__label';
+    label.textContent = 'Is this email correct?';
+
+    const emailDisplay = document.createElement('div');
+    emailDisplay.className = 'sunny-email-confirm__email';
+    emailDisplay.textContent = email;
+
+    const actions = document.createElement('div');
+    actions.className = 'sunny-email-confirm__actions';
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = 'sunny-email-confirm__confirm';
+    confirmBtn.textContent = "Yes, that's right";
+
+    const changeBtn = document.createElement('button');
+    changeBtn.type = 'button';
+    changeBtn.className = 'sunny-email-confirm__change';
+    changeBtn.textContent = 'Use a different email';
+
+    actions.appendChild(confirmBtn);
+    actions.appendChild(changeBtn);
+
+    const changeForm = document.createElement('form');
+    changeForm.className = 'sunny-email-confirm__change-form';
+    changeForm.style.display = 'none';
+    const newEmailInput = document.createElement('input');
+    newEmailInput.type = 'email';
+    newEmailInput.className = 'sunny-email-confirm__input';
+    newEmailInput.placeholder = 'Enter a different email';
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'submit';
+    saveBtn.className = 'sunny-email-confirm__save';
+    saveBtn.textContent = 'Save';
+    changeForm.appendChild(newEmailInput);
+    changeForm.appendChild(saveBtn);
+
+    const errorEl = document.createElement('div');
+    errorEl.className = 'sunny-email-confirm__error';
+    errorEl.style.display = 'none';
+
+    const successEl = document.createElement('div');
+    successEl.className = 'sunny-email-confirm__success';
+    successEl.style.display = 'none';
+
+    const sendHidden = async (payload: string) => {
+      try {
+        const snap = client.getSnapshot();
+        const conversationId = snap.activeConversationId ?? snap.conversations[0]?.id;
+        if (conversationId) {
+          await client.sendMessage(payload, { conversationId });
+        }
+      } catch (err) {
+        console.warn('[EmailConfirm] Failed to send hidden message:', err);
+      }
+    };
+
+    confirmBtn.addEventListener('click', async () => {
+      confirmBtn.disabled = true;
+      changeBtn.disabled = true;
+      actions.style.display = 'none';
+      successEl.textContent = `✓ Email confirmed: ${email}`;
+      successEl.style.display = 'block';
+      await sendHidden('{hidden_message}"email_confirmed"{/hidden_message}');
+    });
+
+    changeBtn.addEventListener('click', () => {
+      actions.style.display = 'none';
+      changeForm.style.display = 'flex';
+      newEmailInput.focus();
+    });
+
+    changeForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const newEmail = newEmailInput.value.trim();
+      if (!newEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail)) {
+        errorEl.textContent = 'Please enter a valid email address.';
+        errorEl.style.display = 'block';
+        return;
+      }
+      errorEl.style.display = 'none';
+      saveBtn.disabled = true;
+      newEmailInput.disabled = true;
+      changeForm.style.display = 'none';
+      successEl.textContent = `✓ Email updated: ${newEmail}`;
+      successEl.style.display = 'block';
+      await sendHidden(`{hidden_message}"email_updated:${newEmail}"{/hidden_message}`);
+    });
+
+    card.append(label, emailDisplay, actions, changeForm, errorEl, successEl);
     return card;
   };
 
@@ -2275,18 +2464,21 @@ function ensureStyles() {
     font-weight: 500;
   }
   .sunny-chat__progress-track {
+    position: relative;
     width: 100%;
-    height: 4px;
+    height: 8px;
     border-radius: 999px;
-    background: var(--sunny-gray-100);
+    background: var(--sunny-color-primary-border);
     overflow: hidden;
   }
   .sunny-chat__progress-fill {
     height: 100%;
-    width: 0%;
+    width: 100%;
     background: var(--sunny-color-primary);
     border-radius: 999px;
-    transition: width var(--sunny-transition-fast);
+    transform: translateX(-100%);
+    transition: transform 300ms ease-out;
+    will-change: transform;
   }
 
   /* Messages Area */
@@ -3194,6 +3386,27 @@ function ensureStyles() {
     opacity: 0.6;
     cursor: not-allowed;
   }
+  .sunny-verification-flow__resend-row {
+    display: flex;
+    justify-content: center;
+    margin-top: 4px;
+  }
+  .sunny-verification-flow__resend {
+    background: transparent;
+    border: none;
+    padding: 4px 8px;
+    font-family: inherit;
+    font-size: 0.875em;
+    color: var(--sunny-color-primary);
+    cursor: pointer;
+  }
+  .sunny-verification-flow__resend:hover:not(:disabled) {
+    text-decoration: underline;
+  }
+  .sunny-verification-flow__resend:disabled {
+    color: var(--sunny-gray-500);
+    cursor: not-allowed;
+  }
   .sunny-verification-flow__use-different {
     align-self: center;
     margin-top: 4px;
@@ -3212,6 +3425,128 @@ function ensureStyles() {
   .sunny-verification-flow__use-different:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+  .sunny-email-confirm {
+    padding: 16px;
+    background: var(--sunny-color-primary-card-bg);
+    border: 1px solid var(--sunny-color-primary-border);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 8px;
+  }
+  .sunny-email-confirm__label {
+    font-size: 0.9em;
+    color: var(--sunny-color-muted-text);
+    font-weight: 500;
+  }
+  .sunny-email-confirm__email {
+    font-size: 1em;
+    font-weight: 600;
+    color: var(--sunny-color-text);
+    padding: 8px 12px;
+    background: var(--sunny-color-background);
+    border: 1px solid var(--sunny-gray-200);
+    border-radius: 8px;
+    word-break: break-all;
+  }
+  .sunny-email-confirm__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .sunny-email-confirm__confirm {
+    flex: 1;
+    min-width: 0;
+    padding: 10px 16px;
+    background: var(--sunny-color-primary);
+    color: #ffffff;
+    border: none;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 0.9375em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background var(--sunny-transition-fast);
+  }
+  .sunny-email-confirm__confirm:hover:not(:disabled) {
+    background: var(--sunny-color-primary-hover);
+  }
+  .sunny-email-confirm__confirm:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  .sunny-email-confirm__change {
+    flex: 1;
+    min-width: 0;
+    padding: 10px 16px;
+    background: transparent;
+    color: var(--sunny-color-primary);
+    border: 1px solid var(--sunny-color-primary-border);
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 0.9375em;
+    font-weight: 500;
+    cursor: pointer;
+    transition: border-color var(--sunny-transition-fast);
+  }
+  .sunny-email-confirm__change:hover:not(:disabled) {
+    border-color: var(--sunny-color-primary-border-hover);
+  }
+  .sunny-email-confirm__change:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  .sunny-email-confirm__change-form {
+    display: flex;
+    gap: 8px;
+  }
+  .sunny-email-confirm__input {
+    flex: 1;
+    padding: 10px 12px;
+    border: 1px solid var(--sunny-gray-300);
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 0.9375em;
+    background: var(--sunny-color-background);
+    color: var(--sunny-color-text);
+    outline: none;
+  }
+  .sunny-email-confirm__input:focus {
+    border-color: var(--sunny-color-primary);
+    box-shadow: 0 0 0 3px var(--sunny-color-primary-ring);
+  }
+  .sunny-email-confirm__save {
+    padding: 10px 16px;
+    background: var(--sunny-color-primary);
+    color: #ffffff;
+    border: none;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 0.9375em;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .sunny-email-confirm__save:hover:not(:disabled) {
+    background: var(--sunny-color-primary-hover);
+  }
+  .sunny-email-confirm__save:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+  .sunny-email-confirm__error {
+    color: #dc2626;
+    font-size: 0.875em;
+  }
+  .sunny-email-confirm__success {
+    padding: 10px 12px;
+    background: var(--sunny-color-accent-bg);
+    border: 1px solid var(--sunny-color-accent);
+    border-radius: 8px;
+    color: #15803d;
+    font-size: 0.9375em;
+    font-weight: 500;
   }
   .sunny-verification-flow__success {
     padding: 16px;
@@ -3457,6 +3792,7 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
     [DOCTOR_PROFILE_START, DOCTOR_PROFILE_END],
     [VERIFICATION_FLOW_START, VERIFICATION_FLOW_END],
     [SCHEDULING_PROGRESS_START, SCHEDULING_PROGRESS_END],
+    [EMAIL_CONFIRM_START, EMAIL_CONFIRM_END],
   ];
   let unclosedAt = text.length;
   for (const [openTag, closeTag] of ARTIFACT_TAG_PAIRS) {
@@ -3480,7 +3816,7 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
   let cursor = 0;
 
   // Find all tag positions
-  type TagMatch = { type: 'expanded' | 'minimal' | 'legacy' | 'provider_search_results' | 'verification_flow' | 'scheduling_progress'; start: number; end: number; data?: any; action?: string; phone?: string; email?: string };
+  type TagMatch = { type: 'expanded' | 'minimal' | 'legacy' | 'provider_search_results' | 'verification_flow' | 'scheduling_progress' | 'email_confirm'; start: number; end: number; data?: any; action?: string; phone?: string; email?: string };
   const tagMatches: TagMatch[] = [];
 
   // Find raw JSON doctor profile objects (ChatArtifact format with item_type: "doctor_profile")
@@ -3675,6 +4011,37 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
     progressCursor = end + SCHEDULING_PROGRESS_END.length;
   }
 
+  // Find email confirm tags. Body is a JSON object with an "email" field.
+  // Used for the "And just to double-check, is your email X?" confirmation
+  // step — no email is sent, this is purely a yes/update prompt.
+  let emailConfirmCursor = 0;
+  while (emailConfirmCursor < text.length) {
+    const start = text.indexOf(EMAIL_CONFIRM_START, emailConfirmCursor);
+    if (start === -1) break;
+    const contentStart = start + EMAIL_CONFIRM_START.length;
+    const end = text.indexOf(EMAIL_CONFIRM_END, contentStart);
+    if (end === -1) break;
+    const body = text.slice(contentStart, end).trim();
+    let email: string | undefined;
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed && typeof parsed === 'object' && typeof parsed.email === 'string') {
+        email = parsed.email.trim();
+      }
+    } catch {
+      // Ignore malformed JSON — the tag span is still consumed below.
+    }
+    if (email) {
+      tagMatches.push({
+        type: 'email_confirm',
+        start,
+        end: end + EMAIL_CONFIRM_END.length,
+        email,
+      });
+    }
+    emailConfirmCursor = end + EMAIL_CONFIRM_END.length;
+  }
+
   // Sort matches by position
   tagMatches.sort((a, b) => a.start - b.start);
 
@@ -3698,6 +4065,8 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
       segments.push({ type: 'verification_flow', action: match.action || 'init', phone: match.phone, email: match.email });
     } else if (match.type === 'scheduling_progress' && match.data) {
       segments.push({ type: 'scheduling_progress', data: match.data });
+    } else if (match.type === 'email_confirm' && match.email) {
+      segments.push({ type: 'email_confirm', email: match.email });
     }
 
     cursor = match.end;
