@@ -413,7 +413,7 @@ type ArtifactSegment =
   | { type: 'minimal_profile'; data: any }
   | { type: 'legacy_profile'; data: any }
   | { type: 'provider_search_results'; data: ProviderSearchResultsArtifact }
-  | { type: 'verification_flow'; action: string }
+  | { type: 'verification_flow'; action: string; phone?: string; email?: string }
   | { type: 'scheduling_progress'; data: SchedulingProgressArtifact };
 type ApprovalState = 'approved' | 'rejected';
 
@@ -936,7 +936,8 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
           container.appendChild(card);
         });
       } else if (segment.type === 'verification_flow') {
-        container.appendChild(createVerificationFlowComponent(passwordlessAuth, client, config, verificationPrefill));
+        const autoStart = (segment.phone || segment.email) ? { phone: segment.phone, email: segment.email } : undefined;
+        container.appendChild(createVerificationFlowComponent(passwordlessAuth, client, config, verificationPrefill, autoStart));
       } else if (segment.type === 'scheduling_progress') {
         // Progress artifacts render as a pinned bar at the top of the modal,
         // not inline in the bubble. Just update state here.
@@ -1109,7 +1110,18 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     return card;
   };
 
-  const createVerificationFlowComponent = (authManager: PasswordlessAuthManager | undefined, client: SunnyAgentsClient, clientConfig: SunnyAgentsConfig | undefined, prefill?: { email?: string; phone?: string }): HTMLElement => {
+  const formatPhoneForDisplay = (value: string): string => {
+    const digits = value.replace(/\D/g, '');
+    if (digits.length === 11 && digits.startsWith('1')) {
+      return `(${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`;
+    }
+    if (digits.length === 10) {
+      return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+    }
+    return value;
+  };
+
+  const createVerificationFlowComponent = (authManager: PasswordlessAuthManager | undefined, client: SunnyAgentsClient, clientConfig: SunnyAgentsConfig | undefined, prefill?: { email?: string; phone?: string }, autoStart?: { phone?: string; email?: string }): HTMLElement => {
     const card = document.createElement('div');
     card.className = 'sunny-verification-flow';
 
@@ -1137,6 +1149,12 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     let currentPhone: string | null = null;
     let isSendingCode = false;
     let isVerifyingCode = false;
+
+    // If the agent passed phone/email via the {verification_flow} tag, skip
+    // the manual input step and auto-send the OTP to the known value.
+    const autoStartedPhone = autoStart?.phone?.trim() || null;
+    const autoStartedEmail = autoStart?.email?.trim() || null;
+    const hasAutoStart = !!(autoStartedPhone || autoStartedEmail);
 
     // Create form container
     const form = document.createElement('form');
@@ -1177,6 +1195,14 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
 
     methodToggle.appendChild(emailTab);
     methodToggle.appendChild(phoneTab);
+
+    // If autoStart targets phone, flip the active tab to phone so the "Use
+    // different..." escape hatch lands on the right channel if revealed.
+    if (autoStartedPhone && !autoStartedEmail) {
+      useEmail = false;
+      emailTab.classList.remove('sunny-verification-flow__tab--active');
+      phoneTab.classList.add('sunny-verification-flow__tab--active');
+    }
 
     // Email input
     const emailInput = document.createElement('input');
@@ -1453,13 +1479,110 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     form.addEventListener('submit', handleSubmit);
     actionButton.addEventListener('click', handleSubmit);
 
+    // "Use a different phone/email" escape hatch — only visible once we've
+    // auto-sent a code from the agent-provided value. Clicking reveals the
+    // normal input UI so the user can enter a different destination.
+    const useDifferentLink = document.createElement('button');
+    useDifferentLink.type = 'button';
+    useDifferentLink.className = 'sunny-verification-flow__use-different';
+    useDifferentLink.textContent = autoStartedPhone ? 'Use a different phone number' : 'Use a different email';
+    useDifferentLink.style.display = 'none';
+    useDifferentLink.addEventListener('click', () => {
+      if (isSendingCode || isVerifyingCode) return;
+      waitingForCode = false;
+      currentEmail = null;
+      currentPhone = null;
+      clearCodeInputs();
+      hideStatus();
+      methodToggle.style.display = 'flex';
+      if (autoStartedPhone) {
+        useEmail = false;
+        emailInput.style.display = 'none';
+        phoneRow.style.display = 'flex';
+        phoneInput.value = '';
+      } else {
+        useEmail = true;
+        emailInput.style.display = 'block';
+        phoneRow.style.display = 'none';
+        emailInput.value = '';
+      }
+      useDifferentLink.style.display = 'none';
+      updateUI();
+    });
+
     form.appendChild(inputGroup);
     form.appendChild(codeGroup);
     form.appendChild(statusMessage);
     form.appendChild(actionButton);
+    form.appendChild(useDifferentLink);
 
     card.appendChild(form);
     card.appendChild(successMessage);
+
+    // Auto-send the code if the agent already supplied a phone or email.
+    // Runs on next tick so the card is mounted before we fire the request.
+    if (hasAutoStart && authManager) {
+      methodToggle.style.display = 'none';
+      emailInput.style.display = 'none';
+      phoneRow.style.display = 'none';
+      actionButton.style.display = 'none';
+      isSendingCode = true;
+      const displayTarget = autoStartedPhone
+        ? formatPhoneForDisplay(autoStartedPhone)
+        : autoStartedEmail!;
+      showStatus(
+        autoStartedPhone
+          ? `Sending a 6-digit code by text to ${displayTarget} now.`
+          : `Sending a 6-digit code to ${displayTarget} now.`,
+        'info',
+      );
+      updateUI();
+
+      setTimeout(async () => {
+        try {
+          if (autoStartedPhone) {
+            await authManager.startLogin({ phoneNumber: autoStartedPhone });
+            currentPhone = autoStartedPhone;
+            currentEmail = null;
+          } else if (autoStartedEmail) {
+            await authManager.startLogin({ email: autoStartedEmail });
+            currentEmail = autoStartedEmail;
+            currentPhone = null;
+          }
+          waitingForCode = true;
+          isSendingCode = false;
+          showStatus(
+            autoStartedPhone
+              ? `Enter the 6-digit code we texted to ${displayTarget}.`
+              : `Enter the 6-digit code we sent to ${displayTarget}.`,
+            'success',
+          );
+          actionButton.style.display = '';
+          useDifferentLink.style.display = 'inline-block';
+          updateUI();
+          clearCodeInputs();
+          codeInputs[0]?.focus();
+        } catch (error) {
+          // Auto-send failed — fall back to the manual input UI on the
+          // channel the agent targeted so the user can correct and retry.
+          isSendingCode = false;
+          methodToggle.style.display = 'flex';
+          if (autoStartedPhone) {
+            emailInput.style.display = 'none';
+            phoneRow.style.display = 'flex';
+          } else {
+            emailInput.style.display = 'block';
+            phoneRow.style.display = 'none';
+          }
+          actionButton.style.display = '';
+          showStatus(
+            `Failed to send code: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            'error',
+          );
+          updateUI();
+        }
+      }, 0);
+    }
 
     return card;
   };
@@ -3071,6 +3194,25 @@ function ensureStyles() {
     opacity: 0.6;
     cursor: not-allowed;
   }
+  .sunny-verification-flow__use-different {
+    align-self: center;
+    margin-top: 4px;
+    padding: 6px 4px;
+    background: transparent;
+    border: none;
+    color: var(--sunny-color-primary);
+    font-family: inherit;
+    font-size: 0.875em;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  .sunny-verification-flow__use-different:hover {
+    opacity: 0.8;
+  }
+  .sunny-verification-flow__use-different:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
   .sunny-verification-flow__success {
     padding: 16px;
     background: var(--sunny-color-accent-bg);
@@ -3303,11 +3445,42 @@ function formatArguments(value: unknown): string {
 
 function splitArtifactSegments(text: string): ArtifactSegment[] {
   if (!text) return [];
+
+  // Streaming artifact tags (long JSON bodies like {scheduling_progress}) span
+  // multiple LLM tokens. Between the opening marker and the close arriving,
+  // the raw body would otherwise flash as plain text in the bubble. Truncate
+  // the text at the earliest unclosed opening so nothing renders until the
+  // close lands on a later chunk.
+  const ARTIFACT_TAG_PAIRS: [string, string][] = [
+    [EXPANDED_DOCTOR_PROFILE_START, EXPANDED_DOCTOR_PROFILE_END],
+    [MINIMAL_DOCTOR_PROFILE_START, MINIMAL_DOCTOR_PROFILE_END],
+    [DOCTOR_PROFILE_START, DOCTOR_PROFILE_END],
+    [VERIFICATION_FLOW_START, VERIFICATION_FLOW_END],
+    [SCHEDULING_PROGRESS_START, SCHEDULING_PROGRESS_END],
+  ];
+  let unclosedAt = text.length;
+  for (const [openTag, closeTag] of ARTIFACT_TAG_PAIRS) {
+    let pos = 0;
+    while (pos < text.length) {
+      const openIdx = text.indexOf(openTag, pos);
+      if (openIdx === -1) break;
+      const closeIdx = text.indexOf(closeTag, openIdx + openTag.length);
+      if (closeIdx === -1) {
+        if (openIdx < unclosedAt) unclosedAt = openIdx;
+        break;
+      }
+      pos = closeIdx + closeTag.length;
+    }
+  }
+  if (unclosedAt < text.length) {
+    text = text.slice(0, unclosedAt);
+  }
+
   const segments: ArtifactSegment[] = [];
   let cursor = 0;
 
   // Find all tag positions
-  type TagMatch = { type: 'expanded' | 'minimal' | 'legacy' | 'provider_search_results' | 'verification_flow' | 'scheduling_progress'; start: number; end: number; data?: any; action?: string };
+  type TagMatch = { type: 'expanded' | 'minimal' | 'legacy' | 'provider_search_results' | 'verification_flow' | 'scheduling_progress'; start: number; end: number; data?: any; action?: string; phone?: string; email?: string };
   const tagMatches: TagMatch[] = [];
 
   // Find raw JSON doctor profile objects (ChatArtifact format with item_type: "doctor_profile")
@@ -3440,11 +3613,26 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
     const contentStart = start + VERIFICATION_FLOW_START.length;
     const end = text.indexOf(VERIFICATION_FLOW_END, contentStart);
     if (end === -1) break;
-    // Extract content between tags (should be a quoted string like "init")
+    // Body is either a legacy quoted action string ("init") or a JSON object:
+    // {"phone":"+15555550123","email":"a@b.com","action":"init"}. If phone or
+    // email is present the modal skips the input step and auto-sends the code.
     const content = text.slice(contentStart, end).trim();
-    // Remove quotes if present
-    const action = content.replace(/^["']|["']$/g, '') || 'init';
-    tagMatches.push({ type: 'verification_flow', start, end: end + VERIFICATION_FLOW_END.length, action });
+    let action = 'init';
+    let phone: string | undefined;
+    let email: string | undefined;
+    try {
+      const parsed = JSON.parse(content);
+      if (parsed && typeof parsed === 'object') {
+        if (typeof parsed.action === 'string') action = parsed.action;
+        if (typeof parsed.phone === 'string' && parsed.phone.trim()) phone = parsed.phone.trim();
+        if (typeof parsed.email === 'string' && parsed.email.trim()) email = parsed.email.trim();
+      } else if (typeof parsed === 'string' && parsed) {
+        action = parsed;
+      }
+    } catch {
+      action = content.replace(/^["']|["']$/g, '') || 'init';
+    }
+    tagMatches.push({ type: 'verification_flow', start, end: end + VERIFICATION_FLOW_END.length, action, phone, email });
     verificationCursor = end + VERIFICATION_FLOW_END.length;
   }
 
@@ -3507,7 +3695,7 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
     } else if (match.type === 'provider_search_results') {
       segments.push({ type: 'provider_search_results', data: match.data });
     } else if (match.type === 'verification_flow') {
-      segments.push({ type: 'verification_flow', action: match.action || 'init' });
+      segments.push({ type: 'verification_flow', action: match.action || 'init', phone: match.phone, email: match.email });
     } else if (match.type === 'scheduling_progress' && match.data) {
       segments.push({ type: 'scheduling_progress', data: match.data });
     }
