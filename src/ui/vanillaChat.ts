@@ -1139,12 +1139,12 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       return card;
     }
 
-    // Check if user is already authenticated - if so, show success state immediately
+    // If the user already has a valid auth token at render time, the agent
+    // shouldn't have emitted this tag — render nothing rather than flashing a
+    // stale "you're verified" banner that confuses re-auth / alternative-
+    // method flows. The agent continues with whatever it says after the tag.
     if (authManager.isAuthenticated()) {
-      const successMessage = document.createElement('div');
-      successMessage.className = 'sunny-verification-flow__success';
-      successMessage.textContent = "All set — you're verified.";
-      card.appendChild(successMessage);
+      card.style.display = 'none';
       return card;
     }
 
@@ -3256,8 +3256,9 @@ function ensureStyles() {
     gap: 8px;
   }
   .sunny-verification-flow__phone-region {
-    min-width: 88px;
-    padding: 12px 12px;
+    min-width: 0;
+    width: 68px;
+    padding: 12px 8px;
     border: 1px solid var(--sunny-gray-300);
     border-radius: 8px;
     font-size: 1.071em;
@@ -3714,8 +3715,8 @@ function ensureStyles() {
     }
     .sunny-verification-flow__phone-region {
       min-width: 0;
-      width: 90px;
-      padding: 10px 8px;
+      width: 64px;
+      padding: 10px 6px;
       font-size: 0.9em;
     }
     .sunny-verification-flow__phone-row {
