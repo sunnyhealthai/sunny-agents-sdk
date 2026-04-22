@@ -256,6 +256,16 @@ export class LLMWebSocketManager {
               console.log('[LLMWebSocket] Token refresh successful');
             } else if (data.type === 'auth.refresh_failed') {
               console.error('[LLMWebSocket] Token refresh failed:', data);
+              // Backend could not renew the mcp_token (refresh token expired/revoked
+              // or Auth0 rejected the grant). Flip to unauthenticated so downstream
+              // UI — notably the verification flow card — treats the session as dead
+              // and prompts the user to re-verify instead of showing a stale success
+              // banner.
+              if (this.isAuthenticated) {
+                this.isAuthenticated = false;
+                this.authenticatedUserId = null;
+                this.readyChangeCallbacks.forEach((cb) => { try { cb(); } catch { } });
+              }
             }
 
             // Forward all messages to listeners

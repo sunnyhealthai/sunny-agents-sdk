@@ -195,6 +195,14 @@ export class PasswordlessAuthManager {
         }
         return;
       }
+
+      // Backend tried to refresh the mcp_token and failed (refresh token expired
+      // or revoked). Clear local auth state so the next {verification_flow} render
+      // shows the real re-verify form instead of a stale success banner.
+      if (data.type === 'auth.refresh_failed') {
+        this.logout();
+        return;
+      }
     };
 
     this.messageHandlerUnsubscribe = this.wsManager.onMessage(handler);
@@ -428,6 +436,13 @@ export class PasswordlessAuthManager {
 
   /**
    * Checks if the user is currently authenticated.
+   *
+   * Gated on the live WebSocket auth state — if the WS has disconnected or the
+   * backend dropped authentication (e.g. the mcp_token expired and the refresh
+   * grant failed, surfacing as `auth.refresh_failed`), this returns false even
+   * if the local `authState.expiresAt` hasn't elapsed yet. This is what prevents
+   * the "Verification successful!" card from rendering with no input when the
+   * LLM asks for re-verification after a dead session.
    */
   isAuthenticated(): boolean {
     if (!this.authState || !this.authState.isAuthenticated) {
@@ -437,6 +452,14 @@ export class PasswordlessAuthManager {
     // Check if auth state is expired
     if (this.authState.expiresAt <= Date.now()) {
       this.logout();
+      return false;
+    }
+
+    // Gate on the live WebSocket authentication. The WS can drop auth while the
+    // local authState is still within its 24h window; when that happens we must
+    // report "not authenticated" so UI that depends on this (e.g. the verification
+    // flow card) renders the re-verify form instead of a stale success banner.
+    if (!this.wsManager.getIsAuthenticated()) {
       return false;
     }
 
