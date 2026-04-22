@@ -3445,6 +3445,37 @@ function formatArguments(value: unknown): string {
 
 function splitArtifactSegments(text: string): ArtifactSegment[] {
   if (!text) return [];
+
+  // Streaming artifact tags (long JSON bodies like {scheduling_progress}) span
+  // multiple LLM tokens. Between the opening marker and the close arriving,
+  // the raw body would otherwise flash as plain text in the bubble. Truncate
+  // the text at the earliest unclosed opening so nothing renders until the
+  // close lands on a later chunk.
+  const ARTIFACT_TAG_PAIRS: [string, string][] = [
+    [EXPANDED_DOCTOR_PROFILE_START, EXPANDED_DOCTOR_PROFILE_END],
+    [MINIMAL_DOCTOR_PROFILE_START, MINIMAL_DOCTOR_PROFILE_END],
+    [DOCTOR_PROFILE_START, DOCTOR_PROFILE_END],
+    [VERIFICATION_FLOW_START, VERIFICATION_FLOW_END],
+    [SCHEDULING_PROGRESS_START, SCHEDULING_PROGRESS_END],
+  ];
+  let unclosedAt = text.length;
+  for (const [openTag, closeTag] of ARTIFACT_TAG_PAIRS) {
+    let pos = 0;
+    while (pos < text.length) {
+      const openIdx = text.indexOf(openTag, pos);
+      if (openIdx === -1) break;
+      const closeIdx = text.indexOf(closeTag, openIdx + openTag.length);
+      if (closeIdx === -1) {
+        if (openIdx < unclosedAt) unclosedAt = openIdx;
+        break;
+      }
+      pos = closeIdx + closeTag.length;
+    }
+  }
+  if (unclosedAt < text.length) {
+    text = text.slice(0, unclosedAt);
+  }
+
   const segments: ArtifactSegment[] = [];
   let cursor = 0;
 
