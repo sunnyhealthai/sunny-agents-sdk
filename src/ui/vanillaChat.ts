@@ -3850,6 +3850,23 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
       pos = closeIdx + closeTag.length;
     }
   }
+
+  // The matched-pair pass above only hides text after a *complete* open tag.
+  // While the LLM is still typing the open tag itself (text ends in
+  // `{schedul`, `{verification_flo`, etc.) the partial tag would otherwise
+  // flash as raw text. Detect any trailing prefix of a known open tag and
+  // hide it too.
+  for (const [openTag] of ARTIFACT_TAG_PAIRS) {
+    const maxLen = Math.min(openTag.length - 1, text.length);
+    for (let len = maxLen; len >= 1; len--) {
+      if (text.endsWith(openTag.slice(0, len))) {
+        const cutAt = text.length - len;
+        if (cutAt < unclosedAt) unclosedAt = cutAt;
+        break;
+      }
+    }
+  }
+
   if (unclosedAt < text.length) {
     text = text.slice(0, unclosedAt);
   }
