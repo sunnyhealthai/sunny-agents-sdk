@@ -1183,12 +1183,34 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     phoneTab.textContent = 'Phone';
 
     let useEmail = true;
+
+    // Reset any post-success or post-OTP-sent UI when the user picks an
+    // alternative verification method. Without this, switching tabs after a
+    // prior render that hit the success branch leaves the "All set" banner
+    // visible while the user hasn't actually started a fresh verification —
+    // surfaced as the SUN-771 "alt verification succeeds without input" bug.
+    const resetToFreshInput = () => {
+      if (isSendingCode || isVerifyingCode) return;
+      waitingForCode = false;
+      currentEmail = null;
+      currentPhone = null;
+      clearCodeInputs();
+      hideStatus();
+      stopResendTimer();
+      successMessage.style.display = 'none';
+      form.style.display = '';
+      codeGroup.style.display = 'none';
+      useDifferentLink.style.display = 'none';
+      updateUI();
+    };
+
     emailTab.addEventListener('click', () => {
       useEmail = true;
       emailTab.classList.add('sunny-verification-flow__tab--active');
       phoneTab.classList.remove('sunny-verification-flow__tab--active');
       emailInput.style.display = 'block';
       phoneRow.style.display = 'none';
+      resetToFreshInput();
     });
     phoneTab.addEventListener('click', () => {
       useEmail = false;
@@ -1196,6 +1218,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       emailTab.classList.remove('sunny-verification-flow__tab--active');
       emailInput.style.display = 'none';
       phoneRow.style.display = 'flex';
+      resetToFreshInput();
     });
 
     methodToggle.appendChild(emailTab);
@@ -1597,6 +1620,10 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
         emailInput.value = '';
       }
       useDifferentLink.style.display = 'none';
+      // Restore the input form and hide any prior success banner so the user
+      // sees a fresh verification UI (SUN-771).
+      successMessage.style.display = 'none';
+      form.style.display = '';
       updateUI();
     });
 
@@ -3257,8 +3284,8 @@ function ensureStyles() {
   }
   .sunny-verification-flow__phone-region {
     min-width: 0;
-    width: 68px;
-    padding: 12px 8px;
+    width: 56px;
+    padding: 12px 6px;
     border: 1px solid var(--sunny-gray-300);
     border-radius: 8px;
     font-size: 1.071em;
@@ -3268,6 +3295,8 @@ function ensureStyles() {
     transition: border-color var(--sunny-transition-fast), box-shadow var(--sunny-transition-fast);
     outline: none;
     cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .sunny-verification-flow__phone-region:focus {
     border-color: var(--sunny-color-primary);
@@ -3715,8 +3744,8 @@ function ensureStyles() {
     }
     .sunny-verification-flow__phone-region {
       min-width: 0;
-      width: 64px;
-      padding: 10px 6px;
+      width: 52px;
+      padding: 10px 4px;
       font-size: 0.9em;
     }
     .sunny-verification-flow__phone-row {
