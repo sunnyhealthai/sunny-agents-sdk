@@ -708,7 +708,15 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     const currentStreamId = streamingMsg?.id ?? null;
     const isThinking = streamingMsg && (!streamingMsg.text || streamingMsg.text === '…' || streamingMsg.text === '...');
 
-    isAssistantResponding = streamingMsg !== null;
+    // Scan every visible message rather than just the last one. The
+    // last-visible-message heuristic (`streamingMsg`) is correct for the
+    // in-place fast-path render below, but it can miss a still-streaming
+    // assistant reply when something else is rendered after it (a tool
+    // result, a synthesized status message, etc.), reopening sends while
+    // a stream is genuinely in flight.
+    isAssistantResponding = visibleMessages.some(
+      (m) => m.role === 'assistant' && m.isStreaming,
+    );
     modalSendBtn.disabled = isAssistantResponding;
     triggerSendBtn.disabled = isAssistantResponding;
     suggestionButtons.forEach((btn) => {
