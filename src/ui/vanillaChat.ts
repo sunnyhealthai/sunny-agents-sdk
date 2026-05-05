@@ -682,6 +682,9 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   let streamingBubbleEl: HTMLElement | null = null;
   let lastRenderedMessageCount = 0;
   let lastRenderedConvoId: string | null = null;
+  // Gate sends while the assistant is mid-response — additional user
+  // messages aren't incorporated into the in-flight reply.
+  let isAssistantResponding = false;
 
   const render = (snapshot?: SunnyAgentsClientSnapshot) => {
     const snap = snapshot ?? client.getSnapshot();
@@ -704,6 +707,21 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     const streamingMsg = lastMsg?.role === 'assistant' && lastMsg.isStreaming ? lastMsg : null;
     const currentStreamId = streamingMsg?.id ?? null;
     const isThinking = streamingMsg && (!streamingMsg.text || streamingMsg.text === '…' || streamingMsg.text === '...');
+
+    // Scan every visible message rather than just the last one. The
+    // last-visible-message heuristic (`streamingMsg`) is correct for the
+    // in-place fast-path render below, but it can miss a still-streaming
+    // assistant reply when something else is rendered after it (a tool
+    // result, a synthesized status message, etc.), reopening sends while
+    // a stream is genuinely in flight.
+    isAssistantResponding = visibleMessages.some(
+      (m) => m.role === 'assistant' && m.isStreaming,
+    );
+    modalSendBtn.disabled = isAssistantResponding;
+    triggerSendBtn.disabled = isAssistantResponding;
+    suggestionButtons.forEach((btn) => {
+      btn.disabled = isAssistantResponding;
+    });
 
     // Fast path: if only the streaming message content changed, update in-place
     const structureChanged =
@@ -2140,6 +2158,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   };
 
   const send = async () => {
+    if (isAssistantResponding) return;
     const text = modalInput.value.trim();
     if (!text) return;
     setExpanded(true);
@@ -2158,6 +2177,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   };
 
   const sendInitialMessage = async (text: string) => {
+    if (isAssistantResponding) return;
     const trimmedText = text.trim();
     if (!trimmedText) return;
     modalInput.value = trimmedText;
@@ -3838,6 +3858,23 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
       pos = closeIdx + closeTag.length;
     }
   }
+
+  // The matched-pair pass above only hides text after a *complete* open tag.
+  // While the LLM is still typing the open tag itself (text ends in
+  // `{schedul`, `{verification_flo`, etc.) the partial tag would otherwise
+  // flash as raw text. Detect any trailing prefix of a known open tag and
+  // hide it too.
+  for (const [openTag] of ARTIFACT_TAG_PAIRS) {
+    const maxLen = Math.min(openTag.length - 1, text.length);
+    for (let len = maxLen; len >= 1; len--) {
+      if (text.endsWith(openTag.slice(0, len))) {
+        const cutAt = text.length - len;
+        if (cutAt < unclosedAt) unclosedAt = cutAt;
+        break;
+      }
+    }
+  }
+
   if (unclosedAt < text.length) {
     text = text.slice(0, unclosedAt);
   }
