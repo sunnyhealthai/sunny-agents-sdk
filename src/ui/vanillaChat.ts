@@ -682,6 +682,9 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   let streamingBubbleEl: HTMLElement | null = null;
   let lastRenderedMessageCount = 0;
   let lastRenderedConvoId: string | null = null;
+  // Gate sends while the assistant is mid-response — additional user
+  // messages aren't incorporated into the in-flight reply.
+  let isAssistantResponding = false;
 
   const render = (snapshot?: SunnyAgentsClientSnapshot) => {
     const snap = snapshot ?? client.getSnapshot();
@@ -704,6 +707,13 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     const streamingMsg = lastMsg?.role === 'assistant' && lastMsg.isStreaming ? lastMsg : null;
     const currentStreamId = streamingMsg?.id ?? null;
     const isThinking = streamingMsg && (!streamingMsg.text || streamingMsg.text === '…' || streamingMsg.text === '...');
+
+    isAssistantResponding = streamingMsg !== null;
+    modalSendBtn.disabled = isAssistantResponding;
+    triggerSendBtn.disabled = isAssistantResponding;
+    suggestionButtons.forEach((btn) => {
+      btn.disabled = isAssistantResponding;
+    });
 
     // Fast path: if only the streaming message content changed, update in-place
     const structureChanged =
@@ -2140,6 +2150,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   };
 
   const send = async () => {
+    if (isAssistantResponding) return;
     const text = modalInput.value.trim();
     if (!text) return;
     setExpanded(true);
@@ -2158,6 +2169,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   };
 
   const sendInitialMessage = async (text: string) => {
+    if (isAssistantResponding) return;
     const trimmedText = text.trim();
     if (!trimmedText) return;
     modalInput.value = trimmedText;
