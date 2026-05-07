@@ -3828,6 +3828,22 @@ function formatArguments(value: unknown): string {
   }
 }
 
+/**
+ * Find the index of the first triple-backtick fence whose closing fence has
+ * not yet arrived in `text`. Returns -1 when every fence is closed.
+ */
+function findUnclosedTripleBacktick(text: string): number {
+  let cursor = 0;
+  while (cursor < text.length) {
+    const open = text.indexOf('```', cursor);
+    if (open === -1) return -1;
+    const close = text.indexOf('```', open + 3);
+    if (close === -1) return open;
+    cursor = close + 3;
+  }
+  return -1;
+}
+
 function splitArtifactSegments(text: string): ArtifactSegment[] {
   if (!text) return [];
 
@@ -3875,9 +3891,28 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
     }
   }
 
+  // Triple-backtick code fences. When the LLM wraps an artifact body in a
+  // ```json fence, the raw fence + body would flash as code in the bubble
+  // before the artifact replaces it. Hide everything from an unclosed fence
+  // onward (and from any trailing prefix of a fence still being typed).
+  const fenceIdx = findUnclosedTripleBacktick(text);
+  if (fenceIdx !== -1 && fenceIdx < unclosedAt) unclosedAt = fenceIdx;
+  for (let len = 2; len >= 1; len--) {
+    if (text.endsWith('`'.repeat(len))) {
+      const cutAt = text.length - len;
+      if (cutAt < unclosedAt) unclosedAt = cutAt;
+      break;
+    }
+  }
+
   if (unclosedAt < text.length) {
     text = text.slice(0, unclosedAt);
   }
+
+  // Strip any *closed* triple-backtick code blocks entirely — chat bubbles
+  // never legitimately render code, and a completed fence usually wraps an
+  // artifact body that's already rendered as a card elsewhere.
+  text = text.replace(/```[\s\S]*?```/g, '');
 
   const segments: ArtifactSegment[] = [];
   let cursor = 0;
