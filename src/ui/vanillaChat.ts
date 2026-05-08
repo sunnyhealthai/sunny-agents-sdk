@@ -4,6 +4,11 @@ import type { PasswordlessAuthManager } from '../client/passwordlessAuth';
 import type {
   AuthUpgradeProfileSyncData,
   DoctorProfileArtifact,
+  LocationDetailArtifact,
+  LocationGroup,
+  LocationSearchResultsArtifact,
+  NestedProvider,
+  ProviderNameSearchResultsArtifact,
   ProviderResult,
   ProviderSearchResultsArtifact,
   SchedulingProgressArtifact,
@@ -415,6 +420,13 @@ type ArtifactSegment =
   | { type: 'minimal_profile'; data: any }
   | { type: 'legacy_profile'; data: any }
   | { type: 'provider_search_results'; data: ProviderSearchResultsArtifact }
+  // Location-grouped variants emitted by the four mcp-external search tools
+  // introduced in monorepo PR #469. The flat `provider_search_results`
+  // variant above is retained for asksunny / consumer chat and the legacy
+  // mcp-external `search_providers` tool (now removed).
+  | { type: 'location_search_results'; data: LocationSearchResultsArtifact }
+  | { type: 'provider_name_search_results'; data: ProviderNameSearchResultsArtifact }
+  | { type: 'location_detail'; data: LocationDetailArtifact }
   | { type: 'verification_flow'; action: string; phone?: string; email?: string }
   | { type: 'scheduling_progress'; data: SchedulingProgressArtifact }
   | { type: 'email_confirm'; email: string };
@@ -844,9 +856,17 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   };
 
   const PROVIDER_SEARCH_TOOLS = new Set([
+    // legacy mcp-external (removed in monorepo PR #469) + asksunny tools.
+    // Kept here so older partner deployments and consumer chat still trigger
+    // the "Reviewing real-time provider data..." status overlay.
     'search_providers',
     'search_provider_info',
     'search_providers_by_specialty_with_cost',
+    // mcp-external location-grouped search tools introduced in PR #469.
+    'search_providers_by_specialty',
+    'search_locations_by_name',
+    'find_provider_by_name',
+    'get_location_providers',
   ]);
   const APPOINTMENT_REQUEST_TOOLS = new Set([
     'request_appointment',
@@ -956,6 +976,22 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
           card.style.animationDelay = `${index * 100}ms`;
           container.appendChild(card);
         });
+      } else if (segment.type === 'location_search_results') {
+        const cards = createLocationSearchResultsCard(segment.data);
+        cards.forEach((card, index) => {
+          card.style.animationDelay = `${index * 100}ms`;
+          container.appendChild(card);
+        });
+      } else if (segment.type === 'provider_name_search_results') {
+        const cards = createProviderNameSearchResultsCard(segment.data);
+        cards.forEach((card, index) => {
+          card.style.animationDelay = `${index * 100}ms`;
+          container.appendChild(card);
+        });
+      } else if (segment.type === 'location_detail') {
+        const card = createLocationDetailCard(segment.data);
+        card.style.animationDelay = '0ms';
+        container.appendChild(card);
       } else if (segment.type === 'verification_flow') {
         const autoStart = (segment.phone || segment.email) ? { phone: segment.phone, email: segment.email } : undefined;
         container.appendChild(createVerificationFlowComponent(passwordlessAuth, client, config, verificationPrefill, autoStart));
@@ -2044,6 +2080,192 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     });
 
     return cards;
+  };
+
+  // ===========================================================================
+  // Location-grouped search artifact renderers (mcp-external PR #469).
+  //
+  // The flat `provider_search_results` shape rendered above iterates
+  // providers and surfaces each provider's closest location. The three new
+  // artifact types invert that — they're location-keyed, with matched
+  // providers nested underneath. We surface each location as one card and
+  // list the matched providers beneath the address. Same visual language
+  // (.sunny-provider-search-results__* CSS classes); call-site staggered
+  // animation works the same way.
+  // ===========================================================================
+
+  const formatProviderName = (p: NestedProvider): string => {
+    const parts = [p.first_name, p.last_name].filter(Boolean);
+    return parts.length ? parts.join(' ').trim() : 'Provider';
+  };
+
+  const computeInitials = (name: string): string => {
+    const tokens = name.split(/\s+/).filter(Boolean);
+    if (tokens.length >= 2) {
+      return `${tokens[0][0]}${tokens[tokens.length - 1][0]}`.toUpperCase();
+    }
+    if (tokens.length === 1) {
+      return tokens[0].slice(0, 2).toUpperCase();
+    }
+    return '?';
+  };
+
+  const formatLocationAddress = (loc: LocationGroup): string => {
+    if (loc.address) return loc.address;
+    const parts = [loc.address_line_1, loc.address_line_2, loc.city, loc.state, loc.zip].filter(Boolean);
+    return parts.join(', ');
+  };
+
+  /**
+   * Render one card per [`LocationGroup`]. Each card surfaces the office
+   * (name, address, distance) and lists the matched providers beneath as
+   * compact rows. Used by `location_search_results` and reused with a
+   * different header subtitle by `provider_name_search_results`.
+   */
+  const renderLocationGroupCard = (
+    group: LocationGroup,
+    options?: { subtitle?: string; partialMore?: number },
+  ): HTMLElement => {
+    const card = document.createElement('div');
+    card.className = 'sunny-provider-search-results__provider';
+
+    const content = document.createElement('div');
+    content.className = 'sunny-provider-search-results__provider-content';
+
+    // Avatar column — initials from location name when present, else first provider.
+    const avatarColumn = document.createElement('div');
+    avatarColumn.className = 'sunny-provider-search-results__provider-avatar-column';
+
+    const headerName = group.location_name?.trim() || (
+      group.providers[0] ? formatProviderName(group.providers[0]) : 'Location'
+    );
+    const avatar = document.createElement('div');
+    avatar.className = 'sunny-provider-search-results__provider-avatar';
+    avatar.textContent = computeInitials(headerName);
+    avatarColumn.appendChild(avatar);
+
+    if (group.distance_miles !== null && group.distance_miles !== undefined) {
+      const distanceDiv = document.createElement('div');
+      distanceDiv.className = 'sunny-provider-search-results__provider-distance';
+      distanceDiv.textContent = `${group.distance_miles.toFixed(1)} mi`;
+      avatarColumn.appendChild(distanceDiv);
+    }
+
+    content.appendChild(avatarColumn);
+
+    // Info column.
+    const infoColumn = document.createElement('div');
+    infoColumn.className = 'sunny-provider-search-results__provider-info-column';
+
+    const nameEl = document.createElement('div');
+    nameEl.className = 'sunny-provider-search-results__provider-name';
+    nameEl.textContent = headerName;
+    infoColumn.appendChild(nameEl);
+
+    if (options?.subtitle) {
+      const subtitleEl = document.createElement('div');
+      subtitleEl.className = 'sunny-provider-search-results__provider-subtitle';
+      subtitleEl.textContent = options.subtitle;
+      infoColumn.appendChild(subtitleEl);
+    }
+
+    const address = formatLocationAddress(group);
+    if (address) {
+      const locationDiv = document.createElement('div');
+      locationDiv.className = 'sunny-provider-search-results__provider-location';
+      const locationNameEl = document.createElement('div');
+      locationNameEl.className = 'sunny-provider-search-results__location-name';
+      locationNameEl.textContent = address;
+      locationDiv.appendChild(locationNameEl);
+      infoColumn.appendChild(locationDiv);
+    }
+
+    // Matched providers list (rows beneath the address).
+    if (Array.isArray(group.providers) && group.providers.length > 0) {
+      const list = document.createElement('div');
+      list.className = 'sunny-provider-search-results__nested-providers';
+      group.providers.forEach((p) => {
+        const row = document.createElement('div');
+        row.className = 'sunny-provider-search-results__nested-provider-row';
+        const name = formatProviderName(p);
+        const specialty = (p.specialties && p.specialties[0]) || '';
+        row.textContent = specialty ? `${name} — ${specialty}` : name;
+        list.appendChild(row);
+      });
+      infoColumn.appendChild(list);
+    }
+
+    if (options?.partialMore && options.partialMore > 0) {
+      const more = document.createElement('div');
+      more.className = 'sunny-provider-search-results__partial-more';
+      more.textContent = `+${options.partialMore} more — ask to see the full roster.`;
+      infoColumn.appendChild(more);
+    }
+
+    content.appendChild(infoColumn);
+    card.appendChild(content);
+    return card;
+  };
+
+  const createLocationSearchResultsCard = (
+    data: LocationSearchResultsArtifact,
+  ): HTMLElement[] => {
+    if (!data || !Array.isArray(data.locations) || data.locations.length === 0) {
+      const errorCard = document.createElement('div');
+      errorCard.className = 'sunny-provider-search-results__error';
+      errorCard.textContent = 'No locations found';
+      return [errorCard];
+    }
+    return data.locations.map((loc) =>
+      renderLocationGroupCard(loc, {
+        subtitle: loc.providers.length === 1
+          ? '1 provider'
+          : `${loc.providers.length} providers`,
+      }),
+    );
+  };
+
+  const createProviderNameSearchResultsCard = (
+    data: ProviderNameSearchResultsArtifact,
+  ): HTMLElement[] => {
+    if (!data || !Array.isArray(data.locations) || data.locations.length === 0) {
+      const errorCard = document.createElement('div');
+      errorCard.className = 'sunny-provider-search-results__error';
+      errorCard.textContent = 'No providers found';
+      return [errorCard];
+    }
+    // For name search, the "headline" is the matched provider, not the
+    // location. Override the card header to show the provider's name and
+    // use the location name as the subtitle.
+    return data.locations.map((loc) => {
+      const matched = loc.providers[0];
+      const providerHeading = matched ? formatProviderName(matched) : (loc.location_name || 'Provider');
+      const officeSubtitle = loc.location_name || formatLocationAddress(loc);
+      const headlineGroup: LocationGroup = {
+        ...loc,
+        // Repackage so renderLocationGroupCard's title is the provider name.
+        location_name: providerHeading,
+      };
+      return renderLocationGroupCard(headlineGroup, { subtitle: officeSubtitle });
+    });
+  };
+
+  const createLocationDetailCard = (data: LocationDetailArtifact): HTMLElement => {
+    if (!data || !data.location) {
+      const errorCard = document.createElement('div');
+      errorCard.className = 'sunny-provider-search-results__error';
+      errorCard.textContent = 'Location detail unavailable';
+      return errorCard;
+    }
+    const subtitle = data.partial_results
+      ? `${data.returned_count} providers (more available — increase group_size for the full roster)`
+      : `${data.returned_count} provider${data.returned_count === 1 ? '' : 's'}`;
+    return renderLocationGroupCard(data.location, {
+      subtitle,
+      // We don't know the precise overflow count when partial_results=true;
+      // the heuristic "+more" line under the providers communicates that.
+      partialMore: data.partial_results ? 1 : 0,
+    });
   };
 
   const renderProviderProfile = (card: HTMLElement, profile: ProviderCardViewModel) => {
@@ -3965,7 +4187,7 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
   let cursor = 0;
 
   // Find all tag positions
-  type TagMatch = { type: 'expanded' | 'minimal' | 'legacy' | 'provider_search_results' | 'verification_flow' | 'scheduling_progress' | 'email_confirm'; start: number; end: number; data?: any; action?: string; phone?: string; email?: string };
+  type TagMatch = { type: 'expanded' | 'minimal' | 'legacy' | 'provider_search_results' | 'location_search_results' | 'provider_name_search_results' | 'location_detail' | 'verification_flow' | 'scheduling_progress' | 'email_confirm'; start: number; end: number; data?: any; action?: string; phone?: string; email?: string };
   const tagMatches: TagMatch[] = [];
 
   // Find raw JSON doctor profile objects (ChatArtifact format with item_type: "doctor_profile")
@@ -4023,10 +4245,21 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
           // Extract item_content and create a legacy profile segment
           tagMatches.push({ type: 'legacy', start, end, data: artifact.item_content });
         }
-        // Check if it's a provider search results artifact
+        // Check if it's a provider search results artifact (legacy flat shape;
+        // emitted by asksunny + the removed mcp-external `search_providers` tool).
         else if (artifact && typeof artifact === 'object' && artifact.item_type === 'provider_search_results' && artifact.item_content) {
           // Extract item_content and create a provider search results segment
           tagMatches.push({ type: 'provider_search_results', start, end, data: artifact.item_content });
+        }
+        // mcp-external location-grouped variants (PR #469).
+        else if (artifact && typeof artifact === 'object' && artifact.item_type === 'location_search_results' && artifact.item_content) {
+          tagMatches.push({ type: 'location_search_results', start, end, data: artifact.item_content });
+        }
+        else if (artifact && typeof artifact === 'object' && artifact.item_type === 'provider_name_search_results' && artifact.item_content) {
+          tagMatches.push({ type: 'provider_name_search_results', start, end, data: artifact.item_content });
+        }
+        else if (artifact && typeof artifact === 'object' && artifact.item_type === 'location_detail' && artifact.item_content) {
+          tagMatches.push({ type: 'location_detail', start, end, data: artifact.item_content });
         }
       } catch {
         // Invalid JSON, skip
@@ -4210,6 +4443,12 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
       segments.push({ type: 'legacy_profile', data: match.data });
     } else if (match.type === 'provider_search_results') {
       segments.push({ type: 'provider_search_results', data: match.data });
+    } else if (match.type === 'location_search_results') {
+      segments.push({ type: 'location_search_results', data: match.data });
+    } else if (match.type === 'provider_name_search_results') {
+      segments.push({ type: 'provider_name_search_results', data: match.data });
+    } else if (match.type === 'location_detail') {
+      segments.push({ type: 'location_detail', data: match.data });
     } else if (match.type === 'verification_flow') {
       segments.push({ type: 'verification_flow', action: match.action || 'init', phone: match.phone, email: match.email });
     } else if (match.type === 'scheduling_progress' && match.data) {
