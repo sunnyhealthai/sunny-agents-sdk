@@ -165,7 +165,12 @@ export interface ProviderResult {
 /**
  * Provider search results artifact structure.
  * This structure is stored in the item_content field of the anonymous chat artifact
- * when created by the search_providers tool.
+ * when created by the legacy `search_providers` tool (mcp-external pre-PR-469)
+ * and the asksunny `search_providers_by_specialty_with_cost` tool.
+ *
+ * **Status:** retained for asksunny / consumer chat. mcp-external no longer
+ * emits this shape — see {@link LocationSearchResultsArtifact} and friends
+ * below for the location-grouped equivalents.
  */
 export interface ProviderSearchResultsArtifact {
   providers: ProviderResult[];
@@ -175,6 +180,129 @@ export interface ProviderSearchResultsArtifact {
   plan_name: string;
   filter_gender: string | null;
   filter_languages: string[] | null;
+}
+
+// ===========================================================================
+// Location-grouped search artifacts (mcp-external location-centric tools).
+//
+// Emitted by the four mcp-external search tools introduced in PR
+// sunnyhealthai/monorepo#469:
+//   - `search_providers_by_specialty`  → location_search_results
+//   - `search_locations_by_name`        → location_search_results
+//   - `find_provider_by_name`           → provider_name_search_results
+//   - `get_location_providers`          → location_detail
+//
+// All four return one entry per `location_uuid` with the matched providers
+// attached underneath. Location-level fields (address, phone, geo) are
+// hoisted onto the group so renderers don't have to dig into providers[0].
+// ===========================================================================
+
+/**
+ * One provider entry inside a {@link LocationGroup}. The `point_id` is the
+ * Qdrant point identifier and is the value to pass back to
+ * `schedule_appointment` on the booking step.
+ */
+export interface NestedProvider {
+  npi: string;
+  point_id: string;
+  first_name: string | null;
+  last_name: string | null;
+  specialties: string[];
+  degrees: string[];
+  languages: string[];
+  /** "M" / "F" / "U" or null when unknown. */
+  gender: string | null;
+  is_pcp: boolean | null;
+}
+
+/**
+ * One location group: the office plus the providers (matching the search
+ * filter) at it. Returned inside every grouped-search artifact below.
+ */
+export interface LocationGroup {
+  /** Group key — pass this back to `get_location_providers` for a drill-down. */
+  location_uuid: string;
+  location_name: string | null;
+  address: string | null;
+  address_line_1: string | null;
+  address_line_2: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  primary_phone: string | null;
+  /** Distance from the search center, when a geo radius was used. */
+  distance_miles: number | null;
+  /**
+   * Providers that matched the filter at this location, in the order
+   * Qdrant returned them. May be smaller than the location's true roster
+   * when the request used a provider-level filter (specialty / name) —
+   * call `get_location_providers` for the complete list.
+   */
+  providers: NestedProvider[];
+}
+
+/**
+ * Body of a `location_search_results` artifact. Returned by both
+ * `search_providers_by_specialty` and `search_locations_by_name` — the
+ * input echoes vary, but the location-group shape is shared.
+ */
+export interface LocationSearchResultsArtifact {
+  locations: LocationGroup[];
+  /** LLM-supplied medical intent (verbatim) — kept for traceability. */
+  query: string;
+  /** Geocoded address string the user provided. */
+  location: string;
+  /** Taxonomy codes used as a filter, if any. Empty for `search_locations_by_name`. */
+  taxonomy_codes: string[];
+  /** Practice-name fragment used as a filter, if any. Populated only by `search_locations_by_name`. */
+  location_name_query: string | null;
+  plan_id: string;
+  filter_gender: string | null;
+  filter_languages: string[] | null;
+  radius_miles: number;
+  total_locations: number;
+}
+
+/**
+ * Body of a `provider_name_search_results` artifact. Returned by
+ * `find_provider_by_name`. Each location in `locations` contains only the
+ * provider(s) whose name matched.
+ */
+export interface ProviderNameSearchResultsArtifact {
+  locations: LocationGroup[];
+  query: string;
+  location: string;
+  /** First-name token the LLM passed (raw, pre-lowercase). */
+  provider_first_name: string | null;
+  /** Last-name token the LLM passed (raw, pre-lowercase). */
+  provider_last_name: string | null;
+  plan_id: string;
+  radius_miles: number;
+  /** Distinct NPIs across all returned locations. */
+  matched_npis: string[];
+  total_locations: number;
+}
+
+/**
+ * Body of a `location_detail` artifact. Returned by
+ * `get_location_providers` for the drill-down case ("show me everyone at
+ * this location"). Always exactly one location group, no provider-level
+ * filter.
+ */
+export interface LocationDetailArtifact {
+  location: LocationGroup;
+  plan_id: string;
+  /**
+   * Number of providers in `location.providers`. Equals the location's
+   * complete in-network roster size only when `partial_results` is false.
+   */
+  returned_count: number;
+  /**
+   * `true` when the drill-down was capped and Qdrant indicated more
+   * pages were available. Surface a "+N more" affordance or re-call
+   * `get_location_providers` with a larger `group_size`.
+   */
+  partial_results: boolean;
 }
 
 /**
