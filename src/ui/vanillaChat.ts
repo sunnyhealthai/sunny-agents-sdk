@@ -1027,6 +1027,25 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     return paragraph;
   };
 
+  // Optimistically render a user bubble immediately on send so the user gets
+  // visual confirmation that the message was accepted, instead of seeing it
+  // sit in the input for the duration of the createConversation/ws round-trip
+  // (3-5s in authenticated mode). When the snapshot arrives, render() does a
+  // structural rebuild and replaces this placeholder with the real bubble.
+  const appendOptimisticUserBubble = (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const row = document.createElement('div');
+    row.className = 'sunny-chat__message sunny-chat__message--user';
+    const bubble = document.createElement('div');
+    bubble.className = 'sunny-chat__bubble';
+    const paragraph = createParagraph(trimmed, false);
+    if (paragraph) bubble.appendChild(paragraph);
+    row.appendChild(bubble);
+    messagesEl.appendChild(row);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  };
+
   const renderApprovalCards = (message: SunnyAgentMessage, approvals: Map<string, ApprovalState>, conversationId: string) => {
     if (!message.outputItems || !message.outputItems.length) return null;
     const requests = message.outputItems.filter((item) => item?.type === 'mcp_approval_request' && item?.id) as SunnyAgentMessageItem[];
@@ -2161,17 +2180,25 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     if (isAssistantResponding) return;
     const text = modalInput.value.trim();
     if (!text) return;
+    // Clear input + render bubble + disable send before awaiting the network
+    // round-trip — otherwise the text sits in the input for 3-5s (auth-mode
+    // createConversation latency) and users spam-tap send. See appendOptimisticUserBubble.
+    modalInput.value = '';
+    modalSendBtn.disabled = true;
+    triggerSendBtn.disabled = true;
     setExpanded(true);
+    appendOptimisticUserBubble(text);
     try {
       const { conversationId } = await client.sendMessage(text, { conversationId: persistedConversationId });
       persistedConversationId = conversationId;
-      modalInput.value = '';
       render();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to send message';
       console.error('[VanillaChat] Error sending message:', errorMessage);
-      // Restore the text to the input so user can retry
+      // Restore the text to the input so user can retry, and re-enable send.
       modalInput.value = text;
+      modalSendBtn.disabled = false;
+      triggerSendBtn.disabled = false;
       throw error; // Re-throw so handleModalSendClick can show alert
     }
   };
@@ -2180,18 +2207,27 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     if (isAssistantResponding) return;
     const trimmedText = text.trim();
     if (!trimmedText) return;
-    modalInput.value = trimmedText;
+    // Clear inputs + render bubble + disable send immediately. Without this,
+    // the message sits in modalInput for the createConversation round-trip and
+    // users mash send → duplicate user messages.
+    modalInput.value = '';
     triggerInput.value = '';
+    modalSendBtn.disabled = true;
+    triggerSendBtn.disabled = true;
+    suggestionButtons.forEach((btn) => { btn.disabled = true; });
     setExpanded(true);
+    appendOptimisticUserBubble(trimmedText);
     try {
       const { conversationId } = await client.sendMessage(trimmedText, { conversationId: persistedConversationId });
       persistedConversationId = conversationId;
-      modalInput.value = '';
       render();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to send message';
       console.error('[VanillaChat] Error sending message:', errorMessage);
       modalInput.value = trimmedText;
+      modalSendBtn.disabled = false;
+      triggerSendBtn.disabled = false;
+      suggestionButtons.forEach((btn) => { btn.disabled = false; });
       alert(GENERIC_SEND_FAILURE_MESSAGE);
     }
   };
@@ -3909,10 +3945,21 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
     text = text.slice(0, unclosedAt);
   }
 
-  // Strip any *closed* triple-backtick code blocks entirely — chat bubbles
-  // never legitimately render code, and a completed fence usually wraps an
-  // artifact body that's already rendered as a card elsewhere.
-  text = text.replace(/```[\s\S]*?```/g, '');
+  // Strip *closed* triple-backtick code blocks — chat bubbles never
+  // legitimately render code. Skip any fence whose body contains a known
+  // artifact opener so the artifact path below still finds and renders
+  // the card. The LLM occasionally wraps artifact bodies in a ```json
+  // fence, in either the {tag}…{/tag} form or the raw `item_type`
+  // ChatArtifact JSON form (handled by the brace-walker below).
+  text = text.replace(/```[\s\S]*?```/g, (match) => {
+    if (ARTIFACT_TAG_PAIRS.some(([openTag]) => match.includes(openTag))) {
+      return match;
+    }
+    if (match.includes('"item_type"')) {
+      return match;
+    }
+    return '';
+  });
 
   const segments: ArtifactSegment[] = [];
   let cursor = 0;
