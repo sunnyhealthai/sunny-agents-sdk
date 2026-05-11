@@ -150,6 +150,7 @@ function normalizePromptSuggestions(
           label: suggestion.label,
           prompt: suggestion.prompt ?? suggestion.label,
           emphasis: suggestion.emphasis,
+          requiresAuth: suggestion.requiresAuth,
         },
   );
 }
@@ -705,6 +706,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
                   type="button"
                   class="${classes.join(' ')}"
                   data-suggestion-prompt="${escapeHtml(suggestion.prompt ?? suggestion.label)}"
+                  ${suggestion.requiresAuth ? 'data-suggestion-requires-auth="true"' : ''}
                 >
                   ${escapeHtml(suggestion.label)}
                 </button>
@@ -1464,7 +1466,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     return value;
   };
 
-  const createVerificationFlowComponent = (authManager: PasswordlessAuthManager | undefined, client: SunnyAgentsClient, clientConfig: SunnyAgentsConfig | undefined, prefill?: { email?: string; phone?: string }, autoStart?: { phone?: string; email?: string }): HTMLElement => {
+  const createVerificationFlowComponent = (authManager: PasswordlessAuthManager | undefined, client: SunnyAgentsClient, clientConfig: SunnyAgentsConfig | undefined, prefill?: { email?: string; phone?: string }, autoStart?: { phone?: string; email?: string }, pendingPrompt?: string): HTMLElement => {
     const card = document.createElement('div');
     card.className = 'sunny-verification-flow';
 
@@ -1899,22 +1901,34 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
           showStatus('', 'success');
           stopResendTimer();
 
-          // Send hidden message to LLM indicating successful authentication
-          // Wait a brief moment for migration events to be processed if migrateHistory is enabled
+          // Send the user's pending prompt (if any) or a hidden auth_success
+          // signal to the LLM. The pending-prompt path covers the case where
+          // the user clicked an auth-gated suggestion before authenticating —
+          // we held the prompt back, did OTP, and now deliver the actual user
+          // intent so the LLM responds to it directly instead of needing a
+          // second round-trip after `auth_success`.
           try {
             // Small delay to allow migration events to be processed (they arrive before auth.upgraded)
             await new Promise(resolve => setTimeout(resolve, 100));
 
             const snap = client.getSnapshot();
             const conversationId = snap.activeConversationId ?? snap.conversations[0]?.id;
-            if (conversationId) {
+            if (pendingPrompt) {
+              // No `if (conversationId)` gate — sendMessage creates a new
+              // conversation when the id is omitted, which is exactly the
+              // case for a first-message auth-gated suggestion click.
+              await client.sendMessage(
+                pendingPrompt,
+                conversationId ? { conversationId } : {},
+              );
+            } else if (conversationId) {
               await client.sendMessage('{hidden_message}"auth_success"{hidden_message/}', {
                 conversationId,
               });
             }
           } catch (error) {
             // Silently fail - hidden message is not critical for UI
-            console.warn('[VanillaChat] Failed to send auth success message:', error);
+            console.warn('[VanillaChat] Failed to send post-auth message:', error);
           }
 
           // Notify auth state change listeners
@@ -2758,7 +2772,35 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
 
   const suggestionClickHandlers = suggestionButtons.map((button) => {
     const prompt = button.dataset.suggestionPrompt ?? button.textContent ?? '';
+    const requiresAuth = button.dataset.suggestionRequiresAuth === 'true';
     const handleSuggestionClick = () => {
+      // Auth-gated suggestions: when the user is anonymous, show the OTP
+      // card immediately and hold the prompt until verification succeeds.
+      // The post-auth path in createVerificationFlowComponent then sends
+      // the held prompt as the first real message. Authenticated users and
+      // suggestions without requiresAuth fall through to the normal send.
+      if (requiresAuth && passwordlessAuth && !passwordlessAuth.isAuthenticated()) {
+        setExpanded(true);
+        appendOptimisticUserBubble(prompt);
+        const row = document.createElement('div');
+        row.className = 'sunny-chat__message sunny-chat__message--assistant';
+        const bubble = document.createElement('div');
+        bubble.className = 'sunny-chat__bubble';
+        bubble.appendChild(
+          createVerificationFlowComponent(
+            passwordlessAuth,
+            client,
+            config,
+            verificationPrefill,
+            undefined,
+            prompt,
+          ),
+        );
+        row.appendChild(bubble);
+        messagesEl.appendChild(row);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+        return;
+      }
       void sendInitialMessage(prompt);
     };
     button.addEventListener('click', handleSuggestionClick);
