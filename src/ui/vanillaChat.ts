@@ -717,8 +717,11 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
           </svg>
         </button>
         <div class="sunny-chat__status" role="status" aria-live="polite" hidden>
-          <span class="sunny-chat__status-spark" aria-hidden="true">✨</span>
-          <span class="sunny-chat__status-label"></span>
+          <div class="sunny-chat__status-line">
+            <span class="sunny-chat__status-spark" aria-hidden="true">✨</span>
+            <span class="sunny-chat__status-label"></span>
+          </div>
+          <div class="sunny-chat__status-bubbles" aria-hidden="true"></div>
         </div>
         <div class="sunny-chat__messages" aria-live="polite"></div>
         <div class="sunny-chat-modal__composer">
@@ -769,6 +772,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   const suggestionButtons = Array.from(root.querySelectorAll('.sunny-chat__suggestion-btn')) as HTMLButtonElement[];
   const statusEl = root.querySelector('.sunny-chat__status') as HTMLElement;
   const statusLabelEl = statusEl.querySelector('.sunny-chat__status-label') as HTMLElement;
+  const statusBubblesEl = statusEl.querySelector('.sunny-chat__status-bubbles') as HTMLElement;
 
   let unsubscribes: Array<() => void> = [];
   let latestSnapshot: SunnyAgentsClientSnapshot | null = null;
@@ -777,9 +781,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   let latestProgress: SchedulingProgressArtifact | null = null;
   let progressConversationId: string | null = null;
 
-  // Map the agent's flow id to a short, calm status label. Step counts and
-  // step labels from the tag are ignored on purpose — the visible UI is
-  // ambient context, not a forced linear progress meter.
+  // Map the agent's flow id to a short, calm status label.
   const statusLabelForFlow = (flow?: string): string => {
     switch (flow) {
       case 'reschedule':
@@ -792,14 +794,87 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     }
   };
 
+  // Canonical bubble layout per flow. Bubbles are rendered in this exact
+  // order; the agent reports which ids have been satisfied via
+  // `completed_steps` and the SDK checks them off — completion can land in
+  // any order (e.g. user volunteers their group ID first, "insurance"
+  // gets checked even though it's near the end of the row).
+  const CANONICAL_STEPS: Record<string, Array<{ id: string; label: string }>> = {
+    schedule: [
+      { id: 'reason', label: 'Visit reason' },
+      { id: 'plan', label: 'Insurance plan' },
+      { id: 'provider', label: 'Provider preference' },
+      { id: 'location', label: 'Location' },
+      { id: 'time', label: 'Appointment time' },
+      { id: 'patient', label: 'Patient details' },
+      { id: 'insurance', label: 'Insurance details' },
+      { id: 'verify', label: 'Verification' },
+    ],
+    reschedule: [
+      { id: 'appointment', label: 'Appointment' },
+      { id: 'time', label: 'New time' },
+      { id: 'provider', label: 'Provider preference' },
+      { id: 'verify', label: 'Verification' },
+    ],
+    cancel: [
+      { id: 'appointment', label: 'Appointment' },
+      { id: 'confirm', label: 'Confirm cancel' },
+      { id: 'verify', label: 'Verification' },
+    ],
+  };
+
+  const completedSetForData = (data: SchedulingProgressArtifact): Set<string> => {
+    if (Array.isArray(data.completed_steps)) {
+      return new Set(data.completed_steps);
+    }
+    // Backward-compat: derive from current_step. Treat steps 1..current_step-1
+    // as completed against the canonical list for this flow.
+    const flow = data.flow ?? 'schedule';
+    const steps = CANONICAL_STEPS[flow] ?? CANONICAL_STEPS.schedule;
+    const cs = typeof data.current_step === 'number' ? data.current_step : 0;
+    const inferred = new Set<string>();
+    for (let i = 0; i < Math.min(cs - 1, steps.length); i++) {
+      inferred.add(steps[i].id);
+    }
+    return inferred;
+  };
+
+  const renderStatusBubbles = (data: SchedulingProgressArtifact) => {
+    const flow = data.flow ?? 'schedule';
+    const steps = CANONICAL_STEPS[flow] ?? CANONICAL_STEPS.schedule;
+    const completed = completedSetForData(data);
+    statusBubblesEl.innerHTML = '';
+    for (const step of steps) {
+      const bubble = document.createElement('span');
+      bubble.className = 'sunny-chat__status-bubble';
+      bubble.title = step.label;
+      bubble.setAttribute('role', 'img');
+      bubble.setAttribute(
+        'aria-label',
+        `${step.label}: ${completed.has(step.id) ? 'done' : 'pending'}`,
+      );
+      if (completed.has(step.id)) {
+        bubble.classList.add('sunny-chat__status-bubble--done');
+        // Inline check glyph for filled bubbles.
+        bubble.innerHTML =
+          '<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
+          '<path d="M2.5 6.2 5 8.5l4.5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>' +
+          '</svg>';
+      }
+      statusBubblesEl.appendChild(bubble);
+    }
+  };
+
   const applySchedulingProgress = (data: SchedulingProgressArtifact) => {
     if (data.completed) {
       latestProgress = null;
       statusEl.hidden = true;
       statusLabelEl.textContent = '';
+      statusBubblesEl.innerHTML = '';
       return;
     }
     statusLabelEl.textContent = statusLabelForFlow(data.flow);
+    renderStatusBubbles(data);
     statusEl.hidden = false;
     latestProgress = data;
   };
@@ -808,6 +883,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     latestProgress = null;
     statusEl.hidden = true;
     statusLabelEl.textContent = '';
+    statusBubblesEl.innerHTML = '';
   };
 
   // Send-button loading spinner for tokenExchange users (anonymous === false)
@@ -2666,16 +2742,24 @@ function ensureStyles() {
     height: 18px;
   }
 
-  /* Pinned ambient status label (replaces stepped progress bar). */
+  /* Pinned ambient status: shimmer label + completion-bubble row. Bubbles are
+     laid out in canonical chat-flow order and fill in any order as the agent
+     reports completed step ids — out-of-order completion (e.g. user volunteers
+     group ID up front) just lights up the matching bubble. */
   .sunny-chat__status {
-    padding: 40px 24px 6px;
+    padding: 40px 24px 8px;
     display: flex;
-    align-items: center;
-    gap: 8px;
+    flex-direction: column;
+    gap: 6px;
     background: var(--sunny-color-background);
   }
   .sunny-chat__status[hidden] {
     display: none;
+  }
+  .sunny-chat__status-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
   .sunny-chat__status-spark {
     font-size: 0.95em;
@@ -2697,6 +2781,34 @@ function ensureStyles() {
     color: transparent;
     animation: sunny-chat-status-shimmer 2.6s linear infinite;
   }
+  .sunny-chat__status-bubbles {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .sunny-chat__status-bubble {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 1.5px solid var(--sunny-gray-300);
+    background: var(--sunny-color-background);
+    color: transparent;
+    transition: background 200ms ease, border-color 200ms ease, color 200ms ease, transform 200ms ease;
+  }
+  .sunny-chat__status-bubble svg {
+    width: 10px;
+    height: 10px;
+  }
+  .sunny-chat__status-bubble--done {
+    background: var(--sunny-color-primary);
+    border-color: var(--sunny-color-primary);
+    color: var(--sunny-color-on-primary, #fff);
+    animation: sunny-chat-status-bubble-pop 320ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
   @keyframes sunny-chat-status-shimmer {
     0% { background-position: 100% 0; }
     100% { background-position: -100% 0; }
@@ -2705,9 +2817,15 @@ function ensureStyles() {
     0%, 100% { transform: scale(1); opacity: 0.8; }
     50% { transform: scale(1.15); opacity: 1; }
   }
+  @keyframes sunny-chat-status-bubble-pop {
+    0% { transform: scale(0.6); }
+    60% { transform: scale(1.18); }
+    100% { transform: scale(1); }
+  }
   @media (prefers-reduced-motion: reduce) {
     .sunny-chat__status-spark,
-    .sunny-chat__status-label {
+    .sunny-chat__status-label,
+    .sunny-chat__status-bubble--done {
       animation: none;
     }
   }
