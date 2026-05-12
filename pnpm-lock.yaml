@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      libphonenumber-js:
+        specifier: ^1.13.1
+        version: 1.13.1
     devDependencies:
       typescript:
         specifier: ^5.0.0
@@ -14,11 +18,16 @@ importers:
 
 packages:
 
+  libphonenumber-js@1.13.1:
+    resolution: {integrity: sha512-GEw0GLL7YUUA6nv21IsCvVjtI5Ejn84sjbdfQ9KxdbqEVOk1PZh7xejn01EEiniKw+dBeCfim+8MGeuvVuE2BA==}
+
   typescript@5.9.3:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
     engines: {node: '>=14.17'}
     hasBin: true
 
 snapshots:
+
+  libphonenumber-js@1.13.1: {}
 
   typescript@5.9.3: {}
