@@ -857,29 +857,95 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     return inferred;
   };
 
+  // Tracks the bubble row's current visible state so we can apply
+  // incremental updates instead of nuking and recreating every bubble on
+  // each render. The message list is rebuilt from scratch on every
+  // streamed token batch — without this cache, every batch would
+  // re-create the bubble DOM, re-add the `--done` class, and re-fire
+  // the pop animation on bubbles that had finished animating already
+  // (the "spaz / bouncing" the user reported).
+  let renderedFlow: string | null = null;
+  let renderedDone: Set<string> = new Set();
+
+  const buildBubbleElement = (step: { id: string; label: string }, isDone: boolean): HTMLSpanElement => {
+    const bubble = document.createElement('span');
+    bubble.className = 'sunny-chat__status-bubble';
+    bubble.title = step.label;
+    bubble.setAttribute('role', 'img');
+    bubble.dataset.stepId = step.id;
+    bubble.setAttribute(
+      'aria-label',
+      `${step.label}: ${isDone ? 'done' : 'pending'}`,
+    );
+    if (isDone) {
+      bubble.classList.add('sunny-chat__status-bubble--done');
+      bubble.innerHTML =
+        '<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
+        '<path d="M2.5 6.2 5 8.5l4.5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '</svg>';
+    }
+    return bubble;
+  };
+
+  const flipBubbleDone = (bubble: HTMLElement, step: { id: string; label: string }) => {
+    bubble.classList.add('sunny-chat__status-bubble--done');
+    bubble.setAttribute('aria-label', `${step.label}: done`);
+    bubble.innerHTML =
+      '<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
+      '<path d="M2.5 6.2 5 8.5l4.5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '</svg>';
+  };
+
+  const unflipBubble = (bubble: HTMLElement, step: { id: string; label: string }) => {
+    bubble.classList.remove('sunny-chat__status-bubble--done');
+    bubble.setAttribute('aria-label', `${step.label}: pending`);
+    bubble.innerHTML = '';
+  };
+
+  const setsEqual = (a: Set<string>, b: Set<string>): boolean => {
+    if (a.size !== b.size) return false;
+    for (const x of a) if (!b.has(x)) return false;
+    return true;
+  };
+
   const renderStatusBubbles = (data: SchedulingProgressArtifact) => {
     const flow = data.flow ?? 'schedule';
     const steps = CANONICAL_STEPS[flow] ?? CANONICAL_STEPS.schedule;
     const completed = completedSetForData(data);
-    statusBubblesEl.innerHTML = '';
-    for (const step of steps) {
-      const bubble = document.createElement('span');
-      bubble.className = 'sunny-chat__status-bubble';
-      bubble.title = step.label;
-      bubble.setAttribute('role', 'img');
-      bubble.setAttribute(
-        'aria-label',
-        `${step.label}: ${completed.has(step.id) ? 'done' : 'pending'}`,
-      );
-      if (completed.has(step.id)) {
-        bubble.classList.add('sunny-chat__status-bubble--done');
-        bubble.innerHTML =
-          '<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
-          '<path d="M2.5 6.2 5 8.5l4.5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>' +
-          '</svg>';
-      }
-      statusBubblesEl.appendChild(bubble);
+
+    if (renderedFlow === flow && setsEqual(renderedDone, completed)) {
+      // Nothing visible to change — most common case during streaming
+      // when the same tag arrives again on every re-render.
+      return;
     }
+
+    if (renderedFlow !== flow) {
+      // Flow changed (or first render): rebuild the row from scratch.
+      // This is rare in practice — flow doesn't switch mid-conversation.
+      statusBubblesEl.innerHTML = '';
+      for (const step of steps) {
+        statusBubblesEl.appendChild(buildBubbleElement(step, completed.has(step.id)));
+      }
+    } else {
+      // Same flow, completion set changed: walk existing bubbles and
+      // only toggle the ones that flipped. The pop animation in CSS
+      // is keyed to adding the `--done` class, so already-done bubbles
+      // sit still and only the newly-completed bubble animates — which
+      // is exactly the visual we want during streaming.
+      const existing = Array.from(statusBubblesEl.children) as HTMLElement[];
+      steps.forEach((step, i) => {
+        const bubble = existing[i];
+        if (!bubble) return;
+        const wasDone = renderedDone.has(step.id);
+        const isDone = completed.has(step.id);
+        if (wasDone === isDone) return;
+        if (isDone) flipBubbleDone(bubble, step);
+        else unflipBubble(bubble, step);
+      });
+    }
+
+    renderedFlow = flow;
+    renderedDone = completed;
   };
 
   const applySchedulingProgress = (data: SchedulingProgressArtifact | null) => {
@@ -889,6 +955,8 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       statusEl.hidden = true;
       statusLabelEl.textContent = '';
       statusBubblesEl.innerHTML = '';
+      renderedFlow = null;
+      renderedDone = new Set();
       return;
     }
     statusLabelEl.textContent = statusLabelForFlow(data.flow);
@@ -902,6 +970,8 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     statusEl.hidden = true;
     statusLabelEl.textContent = '';
     statusBubblesEl.innerHTML = '';
+    renderedFlow = null;
+    renderedDone = new Set();
   };
 
   // Send-button loading spinner for tokenExchange users (anonymous === false)
