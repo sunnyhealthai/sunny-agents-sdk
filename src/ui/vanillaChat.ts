@@ -5176,7 +5176,10 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
   // a chat about dental appointments, so we bias toward over-stripping
   // and drop the whole line. Collapses the gap so the message doesn't
   // leave a visible vertical hole where the leak used to be.
-  const TAG_NAME_RE = /\b(scheduling_progress|verification_flow|email_confirm|doctor_profile|minimal_doctor_profile|expanded_doctor_profile)\b/i;
+  // Derived from the canonical ARTIFACT_TAG_NAMES above so the two lists
+  // can't drift out of sync. Names contain only `[a-z_]`, so no regex
+  // escaping is needed.
+  const TAG_NAME_RE = new RegExp(`\\b(${ARTIFACT_TAG_NAMES.join('|')})\\b`, 'i');
   for (const segment of segments) {
     if (segment.type !== 'text') continue;
     if (!TAG_NAME_RE.test(segment.value)) continue;
