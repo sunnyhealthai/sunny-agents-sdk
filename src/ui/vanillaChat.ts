@@ -1466,7 +1466,20 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     return value;
   };
 
-  const createVerificationFlowComponent = (authManager: PasswordlessAuthManager | undefined, client: SunnyAgentsClient, clientConfig: SunnyAgentsConfig | undefined, prefill?: { email?: string; phone?: string }, autoStart?: { phone?: string; email?: string }, pendingPrompt?: string): HTMLElement => {
+  const createVerificationFlowComponent = (
+    authManager: PasswordlessAuthManager | undefined,
+    client: SunnyAgentsClient,
+    clientConfig: SunnyAgentsConfig | undefined,
+    prefill?: { email?: string; phone?: string },
+    autoStart?: { phone?: string; email?: string },
+    pendingPrompt?: string,
+    options?: {
+      /** Called with the conversation id returned by sendMessage(pendingPrompt)
+       *  so the outer scope can keep persistedConversationId in sync — without
+       *  this, the user's next message can spawn yet another conversation. */
+      onPendingPromptSent?: (conversationId: string) => void;
+    },
+  ): HTMLElement => {
     const card = document.createElement('div');
     card.className = 'sunny-verification-flow';
 
@@ -1917,18 +1930,39 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
               // No `if (conversationId)` gate — sendMessage creates a new
               // conversation when the id is omitted, which is exactly the
               // case for a first-message auth-gated suggestion click.
-              await client.sendMessage(
+              const result = await client.sendMessage(
                 pendingPrompt,
                 conversationId ? { conversationId } : {},
               );
+              // Hand the resolved conversation id back to the outer scope so
+              // persistedConversationId stays in sync. Without this, the next
+              // user message would target a stale id (or none) and could
+              // spawn a second server conversation.
+              if (result?.conversationId) {
+                options?.onPendingPromptSent?.(result.conversationId);
+              }
             } else if (conversationId) {
               await client.sendMessage('{hidden_message}"auth_success"{hidden_message/}', {
                 conversationId,
               });
             }
           } catch (error) {
-            // Silently fail - hidden message is not critical for UI
-            console.warn('[VanillaChat] Failed to send post-auth message:', error);
+            if (pendingPrompt) {
+              // The held prompt is the user's first real message — if it
+              // didn't reach the agent, "you're verified" is a lie. Roll
+              // back to the form so the user can retry or take an
+              // alternative path, and show a visible error.
+              successMessage.style.display = 'none';
+              form.style.display = '';
+              showStatus(
+                `Verified, but I couldn't send your request: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`,
+                'error',
+              );
+            } else {
+              // auth_success hidden ping is non-critical; keep the prior
+              // log-and-continue behaviour.
+              console.warn('[VanillaChat] Failed to send post-auth message:', error);
+            }
           }
 
           // Notify auth state change listeners
@@ -2774,12 +2808,15 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     const prompt = button.dataset.suggestionPrompt ?? button.textContent ?? '';
     const requiresAuth = button.dataset.suggestionRequiresAuth === 'true';
     const handleSuggestionClick = () => {
-      // Auth-gated suggestions: when the user is anonymous, show the OTP
-      // card immediately and hold the prompt until verification succeeds.
-      // The post-auth path in createVerificationFlowComponent then sends
-      // the held prompt as the first real message. Authenticated users and
-      // suggestions without requiresAuth fall through to the normal send.
-      if (requiresAuth && passwordlessAuth && !passwordlessAuth.isAuthenticated()) {
+      // Auth-gated suggestions: when the user is anonymous OR auth isn't
+      // configured, render the verification card immediately and hold the
+      // prompt until verification succeeds. The post-auth path in
+      // createVerificationFlowComponent then sends the held prompt as the
+      // first real message. Authenticated users fall through to the normal
+      // send. If auth isn't wired up at all, the verification card renders
+      // its own configuration-error message instead of silently sending the
+      // gated prompt anyway (which would defeat the whole gate).
+      if (requiresAuth && !(passwordlessAuth?.isAuthenticated() ?? false)) {
         setExpanded(true);
         appendOptimisticUserBubble(prompt);
         const row = document.createElement('div');
@@ -2794,6 +2831,11 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
             verificationPrefill,
             undefined,
             prompt,
+            {
+              onPendingPromptSent: (cid) => {
+                persistedConversationId = cid;
+              },
+            },
           ),
         );
         row.appendChild(bubble);
