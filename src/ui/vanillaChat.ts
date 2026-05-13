@@ -1604,7 +1604,26 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     // phone-only since v0.0.62. The agent should stop emitting email
     // hints; until it does, we treat the email field as silently
     // dropped rather than blocking the flow.
-    const autoStartedPhone = autoStart?.phone?.trim() || null;
+    //
+    // Canonicalize the agent-supplied phone the same way the manual
+    // flow does. The agent may send a national-format string (e.g.
+    // "(415) 555-1234") or an E.164 ("+14155551234") — parse with
+    // libphonenumber-js and use the canonical E.164 form for startLogin
+    // and downstream resend/verify. If parsing fails (no `+`, no
+    // country context), fall back to the raw trimmed value so we don't
+    // refuse a tag the agent emitted in a format libphonenumber-js
+    // couldn't validate without more info.
+    const autoStartedPhoneRaw = autoStart?.phone?.trim() || null;
+    const autoStartedPhone = (() => {
+      if (!autoStartedPhoneRaw) return null;
+      try {
+        const parsed = parsePhoneNumberFromString(autoStartedPhoneRaw);
+        if (parsed?.isValid()) return parsed.format('E.164');
+      } catch {
+        // fall through to the raw value
+      }
+      return autoStartedPhoneRaw;
+    })();
     const hasAutoStart = !!autoStartedPhone;
 
     // Create form container
