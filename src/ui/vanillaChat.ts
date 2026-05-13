@@ -1,4 +1,4 @@
-import { AsYouType, getCountries, getCountryCallingCode, getExampleNumber } from 'libphonenumber-js/min';
+import { AsYouType, getCountries, getCountryCallingCode, getExampleNumber, parsePhoneNumberFromString } from 'libphonenumber-js/min';
 import examples from 'libphonenumber-js/examples.mobile.json';
 import type { CountryCode } from 'libphonenumber-js/min';
 import { SunnyAgentsClient } from '../client/SunnyAgentsClient';
@@ -327,6 +327,11 @@ function createCountryPicker(initialIso: CountryCode = 'US'): CountryPicker {
     renderList();
   };
 
+  const onDocumentMouseDown = (e: MouseEvent) => {
+    if (!isOpen) return;
+    if (!wrapper.contains(e.target as Node)) close();
+  };
+
   const open = () => {
     if (disabled || isOpen) return;
     isOpen = true;
@@ -335,6 +340,11 @@ function createCountryPicker(initialIso: CountryCode = 'US'): CountryPicker {
     searchInput.value = '';
     applyFilter('');
     searchInput.focus();
+    // Only register the outside-click handler while the popover is open. The
+    // previous version registered one document listener per picker at
+    // construction time and never removed it, which leaked global handlers
+    // every time the verification card re-rendered.
+    document.addEventListener('mousedown', onDocumentMouseDown);
   };
 
   const close = () => {
@@ -342,6 +352,7 @@ function createCountryPicker(initialIso: CountryCode = 'US'): CountryPicker {
     isOpen = false;
     popover.hidden = true;
     button.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('mousedown', onDocumentMouseDown);
   };
 
   const select = (iso: CountryCode) => {
@@ -382,12 +393,6 @@ function createCountryPicker(initialIso: CountryCode = 'US'): CountryPicker {
       const target = filtered[focusedIndex];
       if (target) select(target.iso);
     }
-  });
-
-  // Close on outside click
-  document.addEventListener('mousedown', (e) => {
-    if (!isOpen) return;
-    if (!wrapper.contains(e.target as Node)) close();
   });
 
   renderButton();
@@ -595,7 +600,7 @@ type ArtifactSegment =
   | { type: 'legacy_profile'; data: any }
   | { type: 'provider_search_results'; data: ProviderSearchResultsArtifact }
   | { type: 'verification_flow'; action: string; phone?: string; email?: string }
-  | { type: 'scheduling_progress'; data: SchedulingProgressArtifact }
+  | { type: 'scheduling_progress'; data: SchedulingProgressArtifact | null }
   | { type: 'email_confirm'; email: string };
 type ApprovalState = 'approved' | 'rejected';
 
@@ -772,7 +777,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   // artifact-segments parser (so stray emissions never leak as raw JSON), but
   // the SDK no longer renders any visible progress indicator from it. The
   // chat itself is the progress signal.
-  const applySchedulingProgress = (_data: SchedulingProgressArtifact) => {
+  const applySchedulingProgress = (_data: SchedulingProgressArtifact | null) => {
     // intentionally no-op
   };
 
@@ -1633,8 +1638,20 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
         // Start login flow
         const email = emailInput.value.trim();
         const phoneDigits = phoneInput.getDigits();
-        const selectedCode = countryPicker.getCode();
-        const phone = phoneDigits ? `+${selectedCode}${phoneDigits}` : '';
+        const selectedIso = countryPicker.getIso();
+        // Normalize to E.164 via libphonenumber-js so countries with trunk
+        // prefixes (UK/DE/FR/IT/IN, etc.) get the leading 0 stripped
+        // correctly. Naive `+${callingCode}${digits}` concatenation produced
+        // invalid numbers for those locales and caused OTP delivery to fail.
+        let phone = '';
+        if (phoneDigits) {
+          try {
+            const parsed = parsePhoneNumberFromString(phoneDigits, selectedIso);
+            phone = parsed?.isValid() ? parsed.format('E.164') : '';
+          } catch {
+            phone = '';
+          }
+        }
 
         if (useEmail && !email) {
           showStatus('Please enter your email', 'error');
@@ -1642,6 +1659,10 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
         }
         if (!useEmail && !phoneDigits) {
           showStatus('Please enter your phone number', 'error');
+          return;
+        }
+        if (!useEmail && !phone) {
+          showStatus('That phone number doesn’t look quite right for the selected country. Mind double-checking?', 'error');
           return;
         }
 
@@ -3508,9 +3529,14 @@ function ensureStyles() {
   }
   .sunny-country-picker__row-name {
     flex: 1 1 auto;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    min-width: 0;
+    /* Allow long country names (e.g. "Saint Vincent and the Grenadines") to
+       wrap to a second line inside the popover. The whole point of this
+       picker is to surface the full name — truncating with ellipsis defeats
+       that. Rows grow vertically as needed. */
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.25;
   }
   .sunny-country-picker__row-code {
     flex: 0 0 auto;
@@ -4120,11 +4146,41 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
   if (!text) return [];
 
   // Defensive normalization. LLMs occasionally wrap artifact tags in markdown
-  // code fences/backticks or hallucinate square brackets in place of curly
-  // braces. Strip the wrappers and coerce the bracket form *before* we look
-  // for tags so the raw JSON body never reaches the chat bubble.
-  text = text.replace(/`+(\{\/?(?:scheduling_progress|verification_flow|email_confirm|doctor_profile|minimal_doctor_profile|expanded_doctor_profile)\})`+/g, '$1');
-  text = text.replace(/\[(\/?)(scheduling_progress|verification_flow|email_confirm|doctor_profile|minimal_doctor_profile|expanded_doctor_profile)\]/g, '{$1$2}');
+  // code fences (single or triple backticks) or hallucinate square brackets
+  // in place of curly braces. Unwrap and coerce *before* we look for tags so
+  // the raw JSON body never reaches the chat bubble.
+  //
+  // Implementation note: we deliberately use indexOf/split loops rather than
+  // regex with `\`+` quantifiers — patterns like /`+(\{tag\})`+/g exhibit
+  // polynomial backtracking on inputs with many runs of backticks (CodeQL
+  // js/polynomial-redos), and the input here is uncontrolled LLM text.
+  const ARTIFACT_TAG_NAMES = [
+    'scheduling_progress',
+    'verification_flow',
+    'email_confirm',
+    'doctor_profile',
+    'minimal_doctor_profile',
+    'expanded_doctor_profile',
+  ];
+  for (const name of ARTIFACT_TAG_NAMES) {
+    const openTag = `{${name}}`;
+    const closeTag = `{/${name}}`;
+    const openBracket = `[${name}]`;
+    const closeBracket = `[/${name}]`;
+    // Bracket-form coercion.
+    if (text.includes(openBracket)) text = text.split(openBracket).join(openTag);
+    if (text.includes(closeBracket)) text = text.split(closeBracket).join(closeTag);
+    // Backtick fence stripping — bounded fence sizes (1 or 3 backticks). We
+    // don't attempt to strip arbitrarily long backtick runs because such
+    // inputs are pathological and the matched-pair pass below will still
+    // truncate at the inner unclosed tag if anything slips through.
+    for (const fence of ['```', '`']) {
+      const wrappedOpen = `${fence}${openTag}${fence}`;
+      const wrappedClose = `${fence}${closeTag}${fence}`;
+      if (text.includes(wrappedOpen)) text = text.split(wrappedOpen).join(openTag);
+      if (text.includes(wrappedClose)) text = text.split(wrappedClose).join(closeTag);
+    }
+  }
 
   // Streaming artifact tags (long JSON bodies like {scheduling_progress}) span
   // multiple LLM tokens. Between the opening marker and the close arriving,
@@ -4334,9 +4390,12 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
     verificationCursor = end + VERIFICATION_FLOW_END.length;
   }
 
-  // Find scheduling progress tags. Body is a JSON object matching
-  // SchedulingProgressArtifact. Malformed payloads are dropped silently so a
-  // bad emission from the agent doesn't break the whole message render.
+  // Find scheduling progress tags. The tag span is *always* consumed (added
+  // to tagMatches) regardless of body shape — the SDK no longer renders a
+  // visible progress indicator from this artifact, and the only purpose of
+  // recognising it here is to keep the raw `{scheduling_progress}{...}` JSON
+  // body out of the chat bubble. Attempt JSON.parse for back-compat in case
+  // any consumer is reading `data`, but never gate consumption on it.
   let progressCursor = 0;
   while (progressCursor < text.length) {
     const start = text.indexOf(SCHEDULING_PROGRESS_START, progressCursor);
@@ -4345,31 +4404,22 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
     const end = text.indexOf(SCHEDULING_PROGRESS_END, contentStart);
     if (end === -1) break;
     const body = text.slice(contentStart, end).trim();
+    let parsed: SchedulingProgressArtifact | null = null;
     try {
-      const parsed = JSON.parse(body);
-      if (
-        parsed &&
-        typeof parsed === 'object' &&
-        typeof parsed.current_step === 'number' &&
-        typeof parsed.total_steps === 'number'
-      ) {
-        tagMatches.push({
-          type: 'scheduling_progress',
-          start,
-          end: end + SCHEDULING_PROGRESS_END.length,
-          data: parsed as SchedulingProgressArtifact,
-        });
+      const maybe = JSON.parse(body);
+      if (maybe && typeof maybe === 'object') {
+        parsed = maybe as SchedulingProgressArtifact;
       }
     } catch {
-      // Ignore malformed JSON; the tag span is still consumed below so it
-      // doesn't leak into the inline text.
-      tagMatches.push({
-        type: 'scheduling_progress',
-        start,
-        end: end + SCHEDULING_PROGRESS_END.length,
-        data: null,
-      });
+      // Body wasn't valid JSON — fall through with null data. We still
+      // consume the span below so it doesn't leak as text.
     }
+    tagMatches.push({
+      type: 'scheduling_progress',
+      start,
+      end: end + SCHEDULING_PROGRESS_END.length,
+      data: parsed,
+    });
     progressCursor = end + SCHEDULING_PROGRESS_END.length;
   }
 
