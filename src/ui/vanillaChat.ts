@@ -740,7 +740,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
             <span class="sunny-chat__status-spark" aria-hidden="true">✨</span>
             <span class="sunny-chat__status-label"></span>
           </div>
-          <div class="sunny-chat__status-bubbles" aria-hidden="true"></div>
+          <div class="sunny-chat__status-bubbles"></div>
         </div>
         <div class="sunny-chat__messages" aria-live="polite"></div>
         <div class="sunny-chat-modal__composer">
@@ -1087,6 +1087,15 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
           (el as HTMLElement).style.animation = 'none';
           (el as HTMLElement).style.opacity = '1';
         });
+      }
+      // Skip rendering an empty assistant card. The most common case is a
+      // standalone `{scheduling_progress}` message: appendAssistantContent
+      // already fired the side-effect (the pinned bubbles updated) but the
+      // bubble itself has no inline content — appending it would leave a
+      // blank assistant row in the message stream. User messages and
+      // streaming-thinking states are handled elsewhere.
+      if (msg.role === 'assistant' && !msg.isStreaming && bubble.children.length === 0) {
+        continue;
       }
       row.appendChild(bubble);
       messagesEl.appendChild(row);
@@ -1951,9 +1960,15 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
               // The held prompt is the user's first real message — if it
               // didn't reach the agent, "you're verified" is a lie. Roll
               // back to the form so the user can retry or take an
-              // alternative path, and show a visible error.
+              // alternative path, and show a visible error. Also reset
+              // the verification-state flags + updateUI() — otherwise
+              // isVerifyingCode would stay true and the form inputs
+              // would remain disabled even though they're back on screen.
               successMessage.style.display = 'none';
               form.style.display = '';
+              isVerifyingCode = false;
+              waitingForCode = false;
+              updateUI();
               showStatus(
                 `Verified, but I couldn't send your request: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`,
                 'error',
