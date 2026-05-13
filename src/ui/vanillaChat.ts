@@ -150,6 +150,7 @@ function normalizePromptSuggestions(
           label: suggestion.label,
           prompt: suggestion.prompt ?? suggestion.label,
           emphasis: suggestion.emphasis,
+          requiresAuth: suggestion.requiresAuth,
         },
   );
 }
@@ -705,6 +706,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
                   type="button"
                   class="${classes.join(' ')}"
                   data-suggestion-prompt="${escapeHtml(suggestion.prompt ?? suggestion.label)}"
+                  ${suggestion.requiresAuth ? 'data-suggestion-requires-auth="true"' : ''}
                 >
                   ${escapeHtml(suggestion.label)}
                 </button>
@@ -733,6 +735,13 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
             <path d="M6 6l12 12M6 18L18 6" stroke-linecap="round" />
           </svg>
         </button>
+        <div class="sunny-chat__status" role="status" aria-live="polite" hidden>
+          <div class="sunny-chat__status-line">
+            <span class="sunny-chat__status-spark" aria-hidden="true">✨</span>
+            <span class="sunny-chat__status-label"></span>
+          </div>
+          <div class="sunny-chat__status-bubbles"></div>
+        </div>
         <div class="sunny-chat__messages" aria-live="polite"></div>
         <div class="sunny-chat-modal__composer">
           <input type="text" class="sunny-chat-modal__input" placeholder="${escapeHtml(placeholder)}" aria-label="${escapeHtml(placeholder)}" />
@@ -780,21 +789,120 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   const triggerInput = root.querySelector('.sunny-chat__trigger-input') as HTMLInputElement;
   const triggerSendBtn = triggerContainer.querySelector('.sunny-chat__send-btn') as HTMLButtonElement;
   const suggestionButtons = Array.from(root.querySelectorAll('.sunny-chat__suggestion-btn')) as HTMLButtonElement[];
+  const statusEl = root.querySelector('.sunny-chat__status') as HTMLElement;
+  const statusLabelEl = statusEl.querySelector('.sunny-chat__status-label') as HTMLElement;
+  const statusBubblesEl = statusEl.querySelector('.sunny-chat__status-bubbles') as HTMLElement;
+
   let unsubscribes: Array<() => void> = [];
   let latestSnapshot: SunnyAgentsClientSnapshot | null = null;
   let isExpanded = false;
   let isClosing = false; // Flag to prevent immediate reopen on focus
+  let latestProgress: SchedulingProgressArtifact | null = null;
+  let progressConversationId: string | null = null;
 
-  // The {scheduling_progress} tag is still stripped from message text by the
-  // artifact-segments parser (so stray emissions never leak as raw JSON), but
-  // the SDK no longer renders any visible progress indicator from it. The
-  // chat itself is the progress signal.
-  const applySchedulingProgress = (_data: SchedulingProgressArtifact | null) => {
-    // intentionally no-op
+  // Map the agent's flow id to a short, calm status label.
+  const statusLabelForFlow = (flow?: string): string => {
+    switch (flow) {
+      case 'reschedule':
+        return 'Rescheduling your appointment…';
+      case 'cancel':
+        return 'Cancelling your appointment…';
+      case 'schedule':
+      default:
+        return 'Booking your appointment…';
+    }
+  };
+
+  // Canonical bubble layout per flow. Bubbles render in this exact order;
+  // the agent reports which ids have been satisfied via `completed_steps`
+  // and the SDK checks them off — completion lands in any order (e.g. user
+  // volunteers their group ID first → `insurance` lights up immediately even
+  // though it's near the end of the row).
+  const CANONICAL_STEPS: Record<string, Array<{ id: string; label: string }>> = {
+    schedule: [
+      { id: 'reason', label: 'Visit reason' },
+      { id: 'plan', label: 'Insurance plan' },
+      { id: 'provider', label: 'Provider preference' },
+      { id: 'location', label: 'Location' },
+      { id: 'time', label: 'Appointment time' },
+      { id: 'patient', label: 'Patient details' },
+      { id: 'insurance', label: 'Insurance details' },
+      { id: 'verify', label: 'Verification' },
+    ],
+    reschedule: [
+      { id: 'appointment', label: 'Appointment' },
+      { id: 'time', label: 'New time' },
+      { id: 'provider', label: 'Provider preference' },
+      { id: 'verify', label: 'Verification' },
+    ],
+    cancel: [
+      { id: 'appointment', label: 'Appointment' },
+      { id: 'confirm', label: 'Confirm cancel' },
+      { id: 'verify', label: 'Verification' },
+    ],
+  };
+
+  const completedSetForData = (data: SchedulingProgressArtifact): Set<string> => {
+    if (Array.isArray(data.completed_steps)) {
+      return new Set(data.completed_steps);
+    }
+    // Backward-compat for the legacy current_step/total_steps payload:
+    // treat steps 1..current_step-1 as completed against the canonical list.
+    const flow = data.flow ?? 'schedule';
+    const steps = CANONICAL_STEPS[flow] ?? CANONICAL_STEPS.schedule;
+    const cs = typeof data.current_step === 'number' ? data.current_step : 0;
+    const inferred = new Set<string>();
+    for (let i = 0; i < Math.min(cs - 1, steps.length); i++) {
+      inferred.add(steps[i].id);
+    }
+    return inferred;
+  };
+
+  const renderStatusBubbles = (data: SchedulingProgressArtifact) => {
+    const flow = data.flow ?? 'schedule';
+    const steps = CANONICAL_STEPS[flow] ?? CANONICAL_STEPS.schedule;
+    const completed = completedSetForData(data);
+    statusBubblesEl.innerHTML = '';
+    for (const step of steps) {
+      const bubble = document.createElement('span');
+      bubble.className = 'sunny-chat__status-bubble';
+      bubble.title = step.label;
+      bubble.setAttribute('role', 'img');
+      bubble.setAttribute(
+        'aria-label',
+        `${step.label}: ${completed.has(step.id) ? 'done' : 'pending'}`,
+      );
+      if (completed.has(step.id)) {
+        bubble.classList.add('sunny-chat__status-bubble--done');
+        bubble.innerHTML =
+          '<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
+          '<path d="M2.5 6.2 5 8.5l4.5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>' +
+          '</svg>';
+      }
+      statusBubblesEl.appendChild(bubble);
+    }
+  };
+
+  const applySchedulingProgress = (data: SchedulingProgressArtifact | null) => {
+    if (!data) return;
+    if (data.completed) {
+      latestProgress = null;
+      statusEl.hidden = true;
+      statusLabelEl.textContent = '';
+      statusBubblesEl.innerHTML = '';
+      return;
+    }
+    statusLabelEl.textContent = statusLabelForFlow(data.flow);
+    renderStatusBubbles(data);
+    statusEl.hidden = false;
+    latestProgress = data;
   };
 
   const clearSchedulingProgress = () => {
-    // intentionally no-op
+    latestProgress = null;
+    statusEl.hidden = true;
+    statusLabelEl.textContent = '';
+    statusBubblesEl.innerHTML = '';
   };
 
   // Send-button loading spinner for tokenExchange users (anonymous === false)
@@ -946,6 +1054,13 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     streamingBubbleEl = null;
     streamingMsgId = currentStreamId;
     lastRenderedMessageCount = visibleMessages.length;
+    // Clear pinned progress when the active conversation changes — progress
+    // belongs to a flow, not the widget. Messages in the new conversation
+    // will re-emit progress artifacts as they re-render.
+    if (progressConversationId !== convo.id) {
+      clearSchedulingProgress();
+      progressConversationId = convo.id;
+    }
     lastRenderedConvoId = convo.id;
 
     for (const msg of visibleMessages) {
@@ -972,6 +1087,15 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
           (el as HTMLElement).style.animation = 'none';
           (el as HTMLElement).style.opacity = '1';
         });
+      }
+      // Skip rendering an empty assistant card. The most common case is a
+      // standalone `{scheduling_progress}` message: appendAssistantContent
+      // already fired the side-effect (the pinned bubbles updated) but the
+      // bubble itself has no inline content — appending it would leave a
+      // blank assistant row in the message stream. User messages and
+      // streaming-thinking states are handled elsewhere.
+      if (msg.role === 'assistant' && !msg.isStreaming && bubble.children.length === 0) {
+        continue;
       }
       row.appendChild(bubble);
       messagesEl.appendChild(row);
@@ -1351,7 +1475,20 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     return value;
   };
 
-  const createVerificationFlowComponent = (authManager: PasswordlessAuthManager | undefined, client: SunnyAgentsClient, clientConfig: SunnyAgentsConfig | undefined, prefill?: { email?: string; phone?: string }, autoStart?: { phone?: string; email?: string }): HTMLElement => {
+  const createVerificationFlowComponent = (
+    authManager: PasswordlessAuthManager | undefined,
+    client: SunnyAgentsClient,
+    clientConfig: SunnyAgentsConfig | undefined,
+    prefill?: { email?: string; phone?: string },
+    autoStart?: { phone?: string; email?: string },
+    pendingPrompt?: string,
+    options?: {
+      /** Called with the conversation id returned by sendMessage(pendingPrompt)
+       *  so the outer scope can keep persistedConversationId in sync — without
+       *  this, the user's next message can spawn yet another conversation. */
+      onPendingPromptSent?: (conversationId: string) => void;
+    },
+  ): HTMLElement => {
     const card = document.createElement('div');
     card.className = 'sunny-verification-flow';
 
@@ -1786,22 +1923,61 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
           showStatus('', 'success');
           stopResendTimer();
 
-          // Send hidden message to LLM indicating successful authentication
-          // Wait a brief moment for migration events to be processed if migrateHistory is enabled
+          // Send the user's pending prompt (if any) or a hidden auth_success
+          // signal to the LLM. The pending-prompt path covers the case where
+          // the user clicked an auth-gated suggestion before authenticating —
+          // we held the prompt back, did OTP, and now deliver the actual user
+          // intent so the LLM responds to it directly instead of needing a
+          // second round-trip after `auth_success`.
           try {
             // Small delay to allow migration events to be processed (they arrive before auth.upgraded)
             await new Promise(resolve => setTimeout(resolve, 100));
 
             const snap = client.getSnapshot();
             const conversationId = snap.activeConversationId ?? snap.conversations[0]?.id;
-            if (conversationId) {
+            if (pendingPrompt) {
+              // No `if (conversationId)` gate — sendMessage creates a new
+              // conversation when the id is omitted, which is exactly the
+              // case for a first-message auth-gated suggestion click.
+              const result = await client.sendMessage(
+                pendingPrompt,
+                conversationId ? { conversationId } : {},
+              );
+              // Hand the resolved conversation id back to the outer scope so
+              // persistedConversationId stays in sync. Without this, the next
+              // user message would target a stale id (or none) and could
+              // spawn a second server conversation.
+              if (result?.conversationId) {
+                options?.onPendingPromptSent?.(result.conversationId);
+              }
+            } else if (conversationId) {
               await client.sendMessage('{hidden_message}"auth_success"{hidden_message/}', {
                 conversationId,
               });
             }
           } catch (error) {
-            // Silently fail - hidden message is not critical for UI
-            console.warn('[VanillaChat] Failed to send auth success message:', error);
+            if (pendingPrompt) {
+              // The held prompt is the user's first real message — if it
+              // didn't reach the agent, "you're verified" is a lie. Roll
+              // back to the form so the user can retry or take an
+              // alternative path, and show a visible error. Also reset
+              // the verification-state flags + updateUI() — otherwise
+              // isVerifyingCode would stay true and the form inputs
+              // would remain disabled even though they're back on screen.
+              successMessage.style.display = 'none';
+              form.style.display = '';
+              isVerifyingCode = false;
+              waitingForCode = false;
+              updateUI();
+              showStatus(
+                `Verified, but I couldn't send your request: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`,
+                'error',
+              );
+            } else {
+              // auth_success hidden ping is non-critical; keep the prior
+              // log-and-continue behaviour.
+              console.warn('[VanillaChat] Failed to send post-auth message:', error);
+            }
           }
 
           // Notify auth state change listeners
@@ -2645,7 +2821,43 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
 
   const suggestionClickHandlers = suggestionButtons.map((button) => {
     const prompt = button.dataset.suggestionPrompt ?? button.textContent ?? '';
+    const requiresAuth = button.dataset.suggestionRequiresAuth === 'true';
     const handleSuggestionClick = () => {
+      // Auth-gated suggestions: when the user is anonymous OR auth isn't
+      // configured, render the verification card immediately and hold the
+      // prompt until verification succeeds. The post-auth path in
+      // createVerificationFlowComponent then sends the held prompt as the
+      // first real message. Authenticated users fall through to the normal
+      // send. If auth isn't wired up at all, the verification card renders
+      // its own configuration-error message instead of silently sending the
+      // gated prompt anyway (which would defeat the whole gate).
+      if (requiresAuth && !(passwordlessAuth?.isAuthenticated() ?? false)) {
+        setExpanded(true);
+        appendOptimisticUserBubble(prompt);
+        const row = document.createElement('div');
+        row.className = 'sunny-chat__message sunny-chat__message--assistant';
+        const bubble = document.createElement('div');
+        bubble.className = 'sunny-chat__bubble';
+        bubble.appendChild(
+          createVerificationFlowComponent(
+            passwordlessAuth,
+            client,
+            config,
+            verificationPrefill,
+            undefined,
+            prompt,
+            {
+              onPendingPromptSent: (cid) => {
+                persistedConversationId = cid;
+              },
+            },
+          ),
+        );
+        row.appendChild(bubble);
+        messagesEl.appendChild(row);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+        return;
+      }
       void sendInitialMessage(prompt);
     };
     button.addEventListener('click', handleSuggestionClick);
@@ -2908,6 +3120,94 @@ function ensureStyles() {
     height: 18px;
   }
 
+
+  /* Pinned ambient status: shimmer label + completion-bubble row. Bubbles
+     render in canonical chat-flow order and fill in any order as the agent
+     reports completed step ids — out-of-order completion (e.g. user gives
+     their group ID up front) just lights up the matching bubble. */
+  .sunny-chat__status {
+    padding: 40px 24px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: var(--sunny-color-background);
+  }
+  .sunny-chat__status[hidden] {
+    display: none;
+  }
+  .sunny-chat__status-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .sunny-chat__status-spark {
+    font-size: 0.95em;
+    line-height: 1;
+    animation: sunny-chat-status-spark 2.4s ease-in-out infinite;
+  }
+  .sunny-chat__status-label {
+    font-size: 0.82em;
+    font-weight: 500;
+    background: linear-gradient(
+      90deg,
+      var(--sunny-color-muted-text) 0%,
+      var(--sunny-color-text) 50%,
+      var(--sunny-color-muted-text) 100%
+    );
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: sunny-chat-status-shimmer 2.6s linear infinite;
+  }
+  .sunny-chat__status-bubbles {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .sunny-chat__status-bubble {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 1.5px solid var(--sunny-gray-300);
+    background: var(--sunny-color-background);
+    color: transparent;
+    transition: background 200ms ease, border-color 200ms ease, color 200ms ease, transform 200ms ease;
+  }
+  .sunny-chat__status-bubble svg {
+    width: 10px;
+    height: 10px;
+  }
+  .sunny-chat__status-bubble--done {
+    background: var(--sunny-color-primary);
+    border-color: var(--sunny-color-primary);
+    color: var(--sunny-color-on-primary, #fff);
+    animation: sunny-chat-status-bubble-pop 320ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes sunny-chat-status-shimmer {
+    0% { background-position: 100% 0; }
+    100% { background-position: -100% 0; }
+  }
+  @keyframes sunny-chat-status-spark {
+    0%, 100% { transform: scale(1); opacity: 0.8; }
+    50% { transform: scale(1.15); opacity: 1; }
+  }
+  @keyframes sunny-chat-status-bubble-pop {
+    0% { transform: scale(0.6); }
+    60% { transform: scale(1.18); }
+    100% { transform: scale(1); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sunny-chat__status-spark,
+    .sunny-chat__status-label,
+    .sunny-chat__status-bubble--done {
+      animation: none;
+    }
+  }
 
   /* Messages Area */
   .sunny-chat__messages {

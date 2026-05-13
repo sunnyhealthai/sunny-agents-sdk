@@ -380,6 +380,15 @@ export interface VanillaChatPromptSuggestion {
   prompt?: string;
   /** Visual emphasis. 'primary' renders the chip as a solid, conspicuous call-to-action. */
   emphasis?: 'primary';
+  /**
+   * When true and the user is anonymous, clicking the suggestion expands the
+   * modal and renders the OTP verification card immediately — the prompt is
+   * sent to the agent only after verification succeeds. Use for suggestions
+   * that operate on the user's own data (e.g., "Show my past appointments")
+   * so the verify step happens up front instead of waiting for the agent to
+   * emit `{verification_flow}` in its response.
+   */
+  requiresAuth?: boolean;
 }
 
 /**
