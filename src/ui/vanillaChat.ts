@@ -737,7 +737,6 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
         </button>
         <div class="sunny-chat__status" role="status" aria-live="polite" hidden>
           <div class="sunny-chat__status-line">
-            <span class="sunny-chat__status-spark" aria-hidden="true">✨</span>
             <span class="sunny-chat__status-label"></span>
           </div>
           <div class="sunny-chat__status-bubbles"></div>
@@ -1209,10 +1208,17 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     const baseText = message.text || (message.isStreaming ? '…' : '');
     const segments = splitArtifactSegments(baseText);
     if (!segments.length) {
-      const paragraph = createParagraph(baseText, true);
-      if (paragraph) {
-        container.appendChild(paragraph);
-      }
+      // segments comes back empty only when the artifact parser fully
+      // consumed/truncated the input — i.e. the entire message was
+      // tag content (a `{scheduling_progress}` ping with no surrounding
+      // prose, or a partial open tag mid-stream). Rendering `baseText`
+      // here would put the raw unprocessed tag back into the bubble,
+      // which is the exact JSON leak users have complained about. The
+      // correct behavior is to render nothing in this branch — the
+      // side-effects (progress bubble updates, verification card
+      // creation, etc.) already fired inside the segment iteration
+      // (or, here, never fired, which is fine because there were no
+      // matched tags to act on).
       return;
     }
 
@@ -3199,11 +3205,6 @@ function ensureStyles() {
     align-items: center;
     gap: 8px;
   }
-  .sunny-chat__status-spark {
-    font-size: 0.95em;
-    line-height: 1;
-    animation: sunny-chat-status-spark 2.4s ease-in-out infinite;
-  }
   .sunny-chat__status-label {
     font-size: 0.82em;
     font-weight: 500;
@@ -3251,17 +3252,12 @@ function ensureStyles() {
     0% { background-position: 100% 0; }
     100% { background-position: -100% 0; }
   }
-  @keyframes sunny-chat-status-spark {
-    0%, 100% { transform: scale(1); opacity: 0.8; }
-    50% { transform: scale(1.15); opacity: 1; }
-  }
   @keyframes sunny-chat-status-bubble-pop {
     0% { transform: scale(0.6); }
     60% { transform: scale(1.18); }
     100% { transform: scale(1); }
   }
   @media (prefers-reduced-motion: reduce) {
-    .sunny-chat__status-spark,
     .sunny-chat__status-label,
     .sunny-chat__status-bubble--done {
       animation: none;
@@ -5167,6 +5163,29 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
   // Add remaining text
   if (cursor < text.length) {
     segments.push({ type: 'text', value: text.slice(cursor) });
+  }
+
+  // Final safety net: nuke any leftover line that mentions a known
+  // artifact tag name in a text segment. The structured parser handles
+  // canonical `{tag}...{/tag}` spans and the normalized backtick /
+  // square-bracket variants. But the LLM can hallucinate forms we
+  // don't predict — `[scheduling_progress: {flow: ...}]` (single span,
+  // payload inside square brackets, never closed), tag names appearing
+  // mid-sentence, partial fragments after a streaming reflow, etc.
+  // None of these tag names are anything a real user would type into
+  // a chat about dental appointments, so we bias toward over-stripping
+  // and drop the whole line. Collapses the gap so the message doesn't
+  // leave a visible vertical hole where the leak used to be.
+  const TAG_NAME_RE = /\b(scheduling_progress|verification_flow|email_confirm|doctor_profile|minimal_doctor_profile|expanded_doctor_profile)\b/i;
+  for (const segment of segments) {
+    if (segment.type !== 'text') continue;
+    if (!TAG_NAME_RE.test(segment.value)) continue;
+    segment.value = segment.value
+      .split('\n')
+      .filter((line) => !TAG_NAME_RE.test(line))
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/^\s+|\s+$/g, '');
   }
 
   return segments;
