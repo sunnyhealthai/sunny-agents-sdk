@@ -857,29 +857,95 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     return inferred;
   };
 
+  // Tracks the bubble row's current visible state so we can apply
+  // incremental updates instead of nuking and recreating every bubble on
+  // each render. The message list is rebuilt from scratch on every
+  // streamed token batch — without this cache, every batch would
+  // re-create the bubble DOM, re-add the `--done` class, and re-fire
+  // the pop animation on bubbles that had finished animating already
+  // (the "spaz / bouncing" the user reported).
+  let renderedFlow: string | null = null;
+  let renderedDone: Set<string> = new Set();
+
+  const buildBubbleElement = (step: { id: string; label: string }, isDone: boolean): HTMLSpanElement => {
+    const bubble = document.createElement('span');
+    bubble.className = 'sunny-chat__status-bubble';
+    bubble.title = step.label;
+    bubble.setAttribute('role', 'img');
+    bubble.dataset.stepId = step.id;
+    bubble.setAttribute(
+      'aria-label',
+      `${step.label}: ${isDone ? 'done' : 'pending'}`,
+    );
+    if (isDone) {
+      bubble.classList.add('sunny-chat__status-bubble--done');
+      bubble.innerHTML =
+        '<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
+        '<path d="M2.5 6.2 5 8.5l4.5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '</svg>';
+    }
+    return bubble;
+  };
+
+  const flipBubbleDone = (bubble: HTMLElement, step: { id: string; label: string }) => {
+    bubble.classList.add('sunny-chat__status-bubble--done');
+    bubble.setAttribute('aria-label', `${step.label}: done`);
+    bubble.innerHTML =
+      '<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
+      '<path d="M2.5 6.2 5 8.5l4.5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '</svg>';
+  };
+
+  const unflipBubble = (bubble: HTMLElement, step: { id: string; label: string }) => {
+    bubble.classList.remove('sunny-chat__status-bubble--done');
+    bubble.setAttribute('aria-label', `${step.label}: pending`);
+    bubble.innerHTML = '';
+  };
+
+  const setsEqual = (a: Set<string>, b: Set<string>): boolean => {
+    if (a.size !== b.size) return false;
+    for (const x of a) if (!b.has(x)) return false;
+    return true;
+  };
+
   const renderStatusBubbles = (data: SchedulingProgressArtifact) => {
     const flow = data.flow ?? 'schedule';
     const steps = CANONICAL_STEPS[flow] ?? CANONICAL_STEPS.schedule;
     const completed = completedSetForData(data);
-    statusBubblesEl.innerHTML = '';
-    for (const step of steps) {
-      const bubble = document.createElement('span');
-      bubble.className = 'sunny-chat__status-bubble';
-      bubble.title = step.label;
-      bubble.setAttribute('role', 'img');
-      bubble.setAttribute(
-        'aria-label',
-        `${step.label}: ${completed.has(step.id) ? 'done' : 'pending'}`,
-      );
-      if (completed.has(step.id)) {
-        bubble.classList.add('sunny-chat__status-bubble--done');
-        bubble.innerHTML =
-          '<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
-          '<path d="M2.5 6.2 5 8.5l4.5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>' +
-          '</svg>';
-      }
-      statusBubblesEl.appendChild(bubble);
+
+    if (renderedFlow === flow && setsEqual(renderedDone, completed)) {
+      // Nothing visible to change — most common case during streaming
+      // when the same tag arrives again on every re-render.
+      return;
     }
+
+    if (renderedFlow !== flow) {
+      // Flow changed (or first render): rebuild the row from scratch.
+      // This is rare in practice — flow doesn't switch mid-conversation.
+      statusBubblesEl.innerHTML = '';
+      for (const step of steps) {
+        statusBubblesEl.appendChild(buildBubbleElement(step, completed.has(step.id)));
+      }
+    } else {
+      // Same flow, completion set changed: walk existing bubbles and
+      // only toggle the ones that flipped. The pop animation in CSS
+      // is keyed to adding the `--done` class, so already-done bubbles
+      // sit still and only the newly-completed bubble animates — which
+      // is exactly the visual we want during streaming.
+      const existing = Array.from(statusBubblesEl.children) as HTMLElement[];
+      steps.forEach((step, i) => {
+        const bubble = existing[i];
+        if (!bubble) return;
+        const wasDone = renderedDone.has(step.id);
+        const isDone = completed.has(step.id);
+        if (wasDone === isDone) return;
+        if (isDone) flipBubbleDone(bubble, step);
+        else unflipBubble(bubble, step);
+      });
+    }
+
+    renderedFlow = flow;
+    renderedDone = completed;
   };
 
   const applySchedulingProgress = (data: SchedulingProgressArtifact | null) => {
@@ -889,6 +955,8 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       statusEl.hidden = true;
       statusLabelEl.textContent = '';
       statusBubblesEl.innerHTML = '';
+      renderedFlow = null;
+      renderedDone = new Set();
       return;
     }
     statusLabelEl.textContent = statusLabelForFlow(data.flow);
@@ -902,6 +970,8 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     statusEl.hidden = true;
     statusLabelEl.textContent = '';
     statusBubblesEl.innerHTML = '';
+    renderedFlow = null;
+    renderedDone = new Set();
   };
 
   // Send-button loading spinner for tokenExchange users (anonymous === false)
@@ -1485,8 +1555,8 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     authManager: PasswordlessAuthManager | undefined,
     client: SunnyAgentsClient,
     clientConfig: SunnyAgentsConfig | undefined,
-    prefill?: { email?: string; phone?: string },
-    autoStart?: { phone?: string; email?: string },
+    prefill?: { phone?: string },
+    autoStart?: { phone?: string },
     pendingPrompt?: string,
     options?: {
       /** Called with the conversation id returned by sendMessage(pendingPrompt)
@@ -1518,7 +1588,6 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
 
     // Form state
     let waitingForCode = false;
-    let currentEmail: string | null = null;
     let currentPhone: string | null = null;
     let isSendingCode = false;
     let isVerifyingCode = false;
@@ -1529,44 +1598,50 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     // round-tripping a brand-new OTP for an already-verified user.
     let verifiedAwaitingSend = false;
 
-    // If the agent passed phone/email via the {verification_flow} tag, skip
+    // If the agent passed a phone via the {verification_flow} tag, skip
     // the manual input step and auto-send the OTP to the known value.
-    const autoStartedPhone = autoStart?.phone?.trim() || null;
-    const autoStartedEmail = autoStart?.email?.trim() || null;
-    const hasAutoStart = !!(autoStartedPhone || autoStartedEmail);
+    // Email autoStart values from the tag are ignored — this SDK is
+    // phone-only since v0.0.62. The agent should stop emitting email
+    // hints; until it does, we treat the email field as silently
+    // dropped rather than blocking the flow.
+    //
+    // Canonicalize the agent-supplied phone the same way the manual
+    // flow does. The agent may send a national-format string (e.g.
+    // "(415) 555-1234") or an E.164 ("+14155551234") — parse with
+    // libphonenumber-js and use the canonical E.164 form for startLogin
+    // and downstream resend/verify. If parsing fails (no `+`, no
+    // country context), fall back to the raw trimmed value so we don't
+    // refuse a tag the agent emitted in a format libphonenumber-js
+    // couldn't validate without more info.
+    const autoStartedPhoneRaw = autoStart?.phone?.trim() || null;
+    const autoStartedPhone = (() => {
+      if (!autoStartedPhoneRaw) return null;
+      try {
+        const parsed = parsePhoneNumberFromString(autoStartedPhoneRaw);
+        if (parsed?.isValid()) return parsed.format('E.164');
+      } catch {
+        // fall through to the raw value
+      }
+      return autoStartedPhoneRaw;
+    })();
+    const hasAutoStart = !!autoStartedPhone;
 
     // Create form container
     const form = document.createElement('form');
     form.className = 'sunny-verification-flow__form';
     form.addEventListener('submit', (e) => e.preventDefault());
 
-    // Email/Phone input group
+    // Input group: country picker + digit-bubble phone field. Email OTP
+    // was removed in v0.0.62 — verification is phone-only.
     const inputGroup = document.createElement('div');
     inputGroup.className = 'sunny-verification-flow__input-group';
 
-    // Toggle between email and phone
-    const methodToggle = document.createElement('div');
-    methodToggle.className = 'sunny-verification-flow__method-toggle';
-    const emailTab = document.createElement('button');
-    emailTab.type = 'button';
-    emailTab.className = 'sunny-verification-flow__tab sunny-verification-flow__tab--active';
-    emailTab.textContent = 'Email';
-    const phoneTab = document.createElement('button');
-    phoneTab.type = 'button';
-    phoneTab.className = 'sunny-verification-flow__tab';
-    phoneTab.textContent = 'Phone';
-
-    let useEmail = true;
-
-    // Reset any post-success or post-OTP-sent UI when the user picks an
-    // alternative verification method. Without this, switching tabs after a
-    // prior render that hit the success branch leaves the "All set" banner
-    // visible while the user hasn't actually started a fresh verification —
-    // surfaced as the SUN-771 "alt verification succeeds without input" bug.
+    // Reset post-success / post-OTP-sent UI when the user picks the "Use
+    // a different phone" escape hatch. Keeps the form interactive after
+    // a previously-rendered success state.
     const resetToFreshInput = () => {
       if (isSendingCode || isVerifyingCode) return;
       waitingForCode = false;
-      currentEmail = null;
       currentPhone = null;
       clearCodeInputs();
       hideStatus();
@@ -1578,48 +1653,10 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       updateUI();
     };
 
-    emailTab.addEventListener('click', () => {
-      useEmail = true;
-      emailTab.classList.add('sunny-verification-flow__tab--active');
-      phoneTab.classList.remove('sunny-verification-flow__tab--active');
-      emailInput.style.display = 'block';
-      phoneRow.style.display = 'none';
-      resetToFreshInput();
-    });
-    phoneTab.addEventListener('click', () => {
-      useEmail = false;
-      phoneTab.classList.add('sunny-verification-flow__tab--active');
-      emailTab.classList.remove('sunny-verification-flow__tab--active');
-      emailInput.style.display = 'none';
-      phoneRow.style.display = 'flex';
-      resetToFreshInput();
-    });
-
-    methodToggle.appendChild(emailTab);
-    methodToggle.appendChild(phoneTab);
-
-    // If autoStart targets phone, flip the active tab to phone so the "Use
-    // different..." escape hatch lands on the right channel if revealed.
-    if (autoStartedPhone && !autoStartedEmail) {
-      useEmail = false;
-      emailTab.classList.remove('sunny-verification-flow__tab--active');
-      phoneTab.classList.add('sunny-verification-flow__tab--active');
-    }
-
-    // Email input
-    const emailInput = document.createElement('input');
-    emailInput.type = 'email';
-    emailInput.className = 'sunny-verification-flow__input';
-    emailInput.placeholder = 'Enter your email';
-    emailInput.disabled = waitingForCode || isSendingCode;
-    if (prefill?.email) {
-      emailInput.value = prefill.email;
-    }
-
-    // Phone row: region dropdown + phone input
+    // Phone row: country picker + digit-bubble phone input. Always
+    // visible — no email toggle.
     const phoneRow = document.createElement('div');
     phoneRow.className = 'sunny-verification-flow__phone-row';
-    phoneRow.style.display = 'none';
 
     const countryPicker = createCountryPicker('US');
     countryPicker.setDisabled(waitingForCode || isSendingCode);
@@ -1636,8 +1673,6 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     phoneRow.appendChild(countryPicker.el);
     phoneRow.appendChild(phoneInput.el);
 
-    inputGroup.appendChild(methodToggle);
-    inputGroup.appendChild(emailInput);
     inputGroup.appendChild(phoneRow);
 
     // Code input (hidden initially) - 6 separate inputs for each digit
@@ -1745,18 +1780,13 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     resendLink.addEventListener('click', async () => {
       if (resendLink.disabled) return;
       if (isSendingCode || isVerifyingCode) return;
-      if (!currentPhone && !currentEmail) return;
+      if (!currentPhone) return;
       isSendingCode = true;
       resendLink.disabled = true;
       hideStatus();
       try {
-        if (currentPhone) {
-          await authManager.startLogin({ phoneNumber: currentPhone });
-          showStatus(`New code texted to ${formatPhoneForDisplay(currentPhone)}.`, 'success');
-        } else if (currentEmail) {
-          await authManager.startLogin({ email: currentEmail });
-          showStatus(`New code sent to ${currentEmail}.`, 'success');
-        }
+        await authManager.startLogin({ phoneNumber: currentPhone });
+        showStatus(`New code texted to ${formatPhoneForDisplay(currentPhone)}.`, 'success');
         clearCodeInputs();
         codeInputs[0]?.focus();
         startResendTimer();
@@ -1806,24 +1836,21 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     const updateUI = () => {
       if (verifiedAwaitingSend) {
         // OTP succeeded, but the held pendingPrompt didn't reach the agent.
-        // Show a retry-send affordance. Email/phone inputs are not relevant
-        // here (user is already verified) and the OTP digit cells aren't
-        // either — hide both and just present the retry button alongside
-        // the error message already on screen.
+        // Show a retry-send affordance. The phone row + OTP digit cells
+        // aren't relevant here (user is already verified) — hide both
+        // and just present the retry button alongside the error message
+        // already on screen.
         actionButton.textContent = 'Retry sending';
         codeGroup.style.display = 'none';
-        emailInput.style.display = 'none';
         phoneRow.style.display = 'none';
       } else if (waitingForCode) {
         actionButton.textContent = 'Verify Code';
         codeGroup.style.display = 'block';
-        emailInput.disabled = true;
         phoneInput.setDisabled(true);
         countryPicker.setDisabled(true);
       } else {
         actionButton.textContent = 'Send Code';
         codeGroup.style.display = 'none';
-        emailInput.disabled = isSendingCode;
         phoneInput.setDisabled(isSendingCode);
         countryPicker.setDisabled(isSendingCode);
       }
@@ -1935,8 +1962,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       }
 
       if (!waitingForCode) {
-        // Start login flow
-        const email = emailInput.value.trim();
+        // Start login flow — phone only.
         const phoneDigits = phoneInput.getDigits();
         const selectedIso = countryPicker.getIso();
         // Normalize to E.164 via libphonenumber-js so countries with trunk
@@ -1953,15 +1979,11 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
           }
         }
 
-        if (useEmail && !email) {
-          showStatus('Please enter your email', 'error');
-          return;
-        }
-        if (!useEmail && !phoneDigits) {
+        if (!phoneDigits) {
           showStatus('Please enter your phone number', 'error');
           return;
         }
-        if (!useEmail && !phone) {
+        if (!phone) {
           showStatus('That phone number doesn’t look quite right for the selected country. Mind double-checking?', 'error');
           return;
         }
@@ -1970,17 +1992,9 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
         updateUI();
 
         try {
-          if (useEmail) {
-            await authManager.startLogin({ email });
-            currentEmail = email;
-            currentPhone = null;
-            showStatus(`Verification code sent to ${email}`, 'success');
-          } else {
-            await authManager.startLogin({ phoneNumber: phone });
-            currentPhone = phone;
-            currentEmail = null;
-            showStatus(`Verification code sent to ${phone}`, 'success');
-          }
+          await authManager.startLogin({ phoneNumber: phone });
+          currentPhone = phone;
+          showStatus(`Verification code sent to ${phone}`, 'success');
           waitingForCode = true;
           isSendingCode = false;
           updateUI();
@@ -2009,7 +2023,6 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
 
         try {
           await authManager.verifyCode({
-            email: currentEmail ?? undefined,
             phoneNumber: currentPhone ?? undefined,
             code,
           });
@@ -2020,12 +2033,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
             client.setIdTokenProvider(() => Promise.resolve(idToken));
           }
 
-          // Show success — channel-aware copy so phone users see phone text.
-          successMessage.textContent = currentPhone
-            ? 'All set — your phone is verified.'
-            : currentEmail
-            ? 'All set — your email is verified.'
-            : "All set — you're verified.";
+          successMessage.textContent = 'All set — your phone is verified.';
           successMessage.style.display = 'block';
           form.style.display = 'none';
           showStatus('', 'success');
@@ -2054,42 +2062,25 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     form.addEventListener('submit', handleSubmit);
     actionButton.addEventListener('click', handleSubmit);
 
-    // "Use a different phone/email" escape hatch — only visible once we've
-    // auto-sent a code from the agent-provided value. Clicking reveals the
-    // normal input UI so the user can enter a different destination.
+    // "Use a different phone number" escape hatch — only visible once
+    // we've auto-sent a code from the agent-provided phone. Clicking
+    // reveals the normal input UI so the user can enter a different
+    // number.
     const useDifferentLink = document.createElement('button');
     useDifferentLink.type = 'button';
     useDifferentLink.className = 'sunny-verification-flow__use-different';
-    useDifferentLink.textContent = autoStartedPhone ? 'Use a different phone number' : 'Use a different email';
+    useDifferentLink.textContent = 'Use a different phone number';
     useDifferentLink.style.display = 'none';
     useDifferentLink.addEventListener('click', () => {
-      if (isSendingCode || isVerifyingCode) return;
-      waitingForCode = false;
-      currentEmail = null;
-      currentPhone = null;
-      clearCodeInputs();
-      hideStatus();
-      stopResendTimer();
+      // Common reset (state flags, code inputs, status, success banner,
+      // form visibility). The escape-hatch-specific bits — restoring the
+      // resend button copy, re-showing the phone row, clearing the
+      // entered digits — sit alongside.
+      resetToFreshInput();
       resendLink.textContent = 'Resend code';
       resendLink.disabled = true;
-      methodToggle.style.display = 'flex';
-      if (autoStartedPhone) {
-        useEmail = false;
-        emailInput.style.display = 'none';
-        phoneRow.style.display = 'flex';
-        phoneInput.clear();
-      } else {
-        useEmail = true;
-        emailInput.style.display = 'block';
-        phoneRow.style.display = 'none';
-        emailInput.value = '';
-      }
-      useDifferentLink.style.display = 'none';
-      // Restore the input form and hide any prior success banner so the user
-      // sees a fresh verification UI (SUN-771).
-      successMessage.style.display = 'none';
-      form.style.display = '';
-      updateUI();
+      phoneRow.style.display = 'flex';
+      phoneInput.clear();
     });
 
     form.appendChild(inputGroup);
@@ -2101,42 +2092,29 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     card.appendChild(form);
     card.appendChild(successMessage);
 
-    // Auto-send the code if the agent already supplied a phone or email.
-    // Runs on next tick so the card is mounted before we fire the request.
-    if (hasAutoStart && authManager) {
-      methodToggle.style.display = 'none';
-      emailInput.style.display = 'none';
+    // Auto-send the code if the agent already supplied a phone number.
+    // Runs on next tick so the card is mounted before we fire the
+    // request. Phone-only since v0.0.62 — any `autoStart.email` is
+    // silently ignored upstream.
+    if (hasAutoStart && authManager && autoStartedPhone) {
       phoneRow.style.display = 'none';
       actionButton.style.display = 'none';
       isSendingCode = true;
-      const displayTarget = autoStartedPhone
-        ? formatPhoneForDisplay(autoStartedPhone)
-        : autoStartedEmail!;
+      const displayTarget = formatPhoneForDisplay(autoStartedPhone);
       showStatus(
-        autoStartedPhone
-          ? `Sending a 6-digit code by text to ${displayTarget} now.`
-          : `Sending a 6-digit code to ${displayTarget} now.`,
+        `Sending a 6-digit code by text to ${displayTarget} now.`,
         'info',
       );
       updateUI();
 
       setTimeout(async () => {
         try {
-          if (autoStartedPhone) {
-            await authManager.startLogin({ phoneNumber: autoStartedPhone });
-            currentPhone = autoStartedPhone;
-            currentEmail = null;
-          } else if (autoStartedEmail) {
-            await authManager.startLogin({ email: autoStartedEmail });
-            currentEmail = autoStartedEmail;
-            currentPhone = null;
-          }
+          await authManager.startLogin({ phoneNumber: autoStartedPhone });
+          currentPhone = autoStartedPhone;
           waitingForCode = true;
           isSendingCode = false;
           showStatus(
-            autoStartedPhone
-              ? `Enter the 6-digit code we texted to ${displayTarget}.`
-              : `Enter the 6-digit code we sent to ${displayTarget}.`,
+            `Enter the 6-digit code we texted to ${displayTarget}.`,
             'success',
           );
           actionButton.style.display = '';
@@ -2146,17 +2124,10 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
           codeInputs[0]?.focus();
           startResendTimer();
         } catch (error) {
-          // Auto-send failed — fall back to the manual input UI on the
-          // channel the agent targeted so the user can correct and retry.
+          // Auto-send failed — fall back to the manual input UI so the
+          // user can correct the number and retry.
           isSendingCode = false;
-          methodToggle.style.display = 'flex';
-          if (autoStartedPhone) {
-            emailInput.style.display = 'none';
-            phoneRow.style.display = 'flex';
-          } else {
-            emailInput.style.display = 'block';
-            phoneRow.style.display = 'none';
-          }
+          phoneRow.style.display = 'flex';
           actionButton.style.display = '';
           showStatus(
             `Failed to send code: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -3998,37 +3969,6 @@ function ensureStyles() {
     flex-direction: column;
     gap: 16px;
   }
-  .sunny-verification-flow__method-toggle {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 4px;
-  }
-  .sunny-verification-flow__tab {
-    flex: 1;
-    padding: 8px 16px;
-    border: 1px solid var(--sunny-gray-300);
-    background: var(--sunny-color-background);
-    color: var(--sunny-gray-600);
-    border-radius: 8px 8px 0 0;
-    font-size: 1em;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background var(--sunny-transition-fast), border-color var(--sunny-transition-fast), color var(--sunny-transition-fast);
-    font-family: inherit;
-  }
-  .sunny-verification-flow__tab:hover {
-    background: var(--sunny-gray-100);
-    border-color: var(--sunny-gray-400);
-  }
-  .sunny-verification-flow__tab--active {
-    background: var(--sunny-color-primary);
-    color: #fff;
-    border-color: var(--sunny-color-primary);
-  }
-  .sunny-verification-flow__tab--active:hover {
-    background: var(--sunny-color-primary-hover);
-    border-color: var(--sunny-color-primary-hover);
-  }
   .sunny-verification-flow__input-group {
     display: flex;
     flex-direction: column;
@@ -4166,7 +4106,8 @@ function ensureStyles() {
   /* Digit-bubble phone input (replaces single <input type="tel">) */
   .sunny-digit-phone {
     position: relative;
-    flex: 1 1 auto;
+    flex: 1 1 0;
+    min-width: 0; /* let the flex item shrink below content size on narrow */
     display: flex;
     align-items: center;
     padding: 8px 12px;
@@ -4176,6 +4117,7 @@ function ensureStyles() {
     cursor: text;
     transition: border-color var(--sunny-transition-fast), box-shadow var(--sunny-transition-fast);
     min-height: 44px;
+    overflow: hidden;
   }
   .sunny-digit-phone--focused {
     border-color: var(--sunny-color-primary);
@@ -4671,6 +4613,9 @@ function ensureStyles() {
     .sunny-chat__messages {
       padding: 16px;
     }
+    .sunny-verification-flow {
+      padding: 14px;
+    }
     .sunny-verification-flow__code-input {
       width: 36px;
       height: 44px;
@@ -4680,34 +4625,76 @@ function ensureStyles() {
     .sunny-verification-flow__code-inputs {
       gap: 6px;
     }
+    /* Phone row: country picker is fixed-content-width (flag + chevron);
+       phone field shrinks to fill remaining row. Both share a tight gap
+       so the whole row fits comfortably at 320px. */
+    .sunny-verification-flow__phone-row {
+      gap: 6px;
+      width: 100%;
+    }
+    .sunny-country-picker {
+      flex: 0 0 auto;
+    }
     .sunny-country-picker__button {
       padding: 10px 8px;
       font-size: 0.95em;
     }
     .sunny-country-picker__popover {
-      width: 240px;
+      width: min(280px, calc(100vw - 32px));
     }
     .sunny-digit-phone {
-      padding: 6px 10px;
+      padding: 6px 8px;
+      min-width: 0;
+    }
+    .sunny-digit-phone__cells {
+      gap: 2px;
     }
     .sunny-digit-phone__cell {
-      min-width: 14px;
+      min-width: 12px;
       height: 22px;
+      padding: 0 1px;
       font-size: 0.95em;
     }
-    .sunny-verification-flow__phone-row {
-      gap: 6px;
+    .sunny-digit-phone__sep {
+      height: 22px;
+      font-size: 0.85em;
     }
     .sunny-verification-flow__input {
       padding: 10px 12px;
       font-size: 1em;
     }
-    .sunny-verification-flow {
-      padding: 14px;
+    /* Progress bubbles row stays tight + wraps cleanly when the bubble
+       count would otherwise overflow the chat width. */
+    .sunny-chat__status {
+      padding: 32px 16px 6px;
+    }
+    .sunny-chat__status-bubbles {
+      gap: 6px;
     }
     .sunny-chat__thinking-dot {
       width: 7px;
       height: 7px;
+    }
+  }
+  /* Extra-narrow phones (~320px). Drop the cell min-width and gap further
+     so a 10–11 digit mask plus the country button never overflow. */
+  @media (max-width: 360px) {
+    .sunny-digit-phone {
+      padding: 6px 6px;
+    }
+    .sunny-digit-phone__cells {
+      gap: 1px;
+    }
+    .sunny-digit-phone__cell {
+      min-width: 10px;
+      padding: 0;
+      font-size: 0.9em;
+    }
+    .sunny-digit-phone__sep {
+      font-size: 0.8em;
+    }
+    .sunny-country-picker__button {
+      padding: 10px 6px;
     }
   }
   `;
