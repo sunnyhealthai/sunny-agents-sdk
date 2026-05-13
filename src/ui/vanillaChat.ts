@@ -1516,6 +1516,12 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     let currentPhone: string | null = null;
     let isSendingCode = false;
     let isVerifyingCode = false;
+    // Set when OTP succeeded but the held pendingPrompt failed to deliver.
+    // Putting the form in a third state (instead of either OTP-entry or
+    // sending-OTP) so the action button reads "Retry sending" and the
+    // submit handler routes to a fresh pendingPrompt send rather than
+    // round-tripping a brand-new OTP for an already-verified user.
+    let verifiedAwaitingSend = false;
 
     // If the agent passed phone/email via the {verification_flow} tag, skip
     // the manual input step and auto-send the OTP to the known value.
@@ -1792,7 +1798,17 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     successMessage.textContent = "All set — you're verified.";
 
     const updateUI = () => {
-      if (waitingForCode) {
+      if (verifiedAwaitingSend) {
+        // OTP succeeded, but the held pendingPrompt didn't reach the agent.
+        // Show a retry-send affordance. Email/phone inputs are not relevant
+        // here (user is already verified) and the OTP digit cells aren't
+        // either — hide both and just present the retry button alongside
+        // the error message already on screen.
+        actionButton.textContent = 'Retry sending';
+        codeGroup.style.display = 'none';
+        emailInput.style.display = 'none';
+        phoneRow.style.display = 'none';
+      } else if (waitingForCode) {
         actionButton.textContent = 'Verify Code';
         codeGroup.style.display = 'block';
         emailInput.disabled = true;
@@ -1821,10 +1837,96 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       statusMessage.style.display = 'none';
     };
 
+    // Reused for both the initial post-OTP send and the "Retry sending"
+    // button in the verifiedAwaitingSend state. Keeping the logic in one
+    // place so the success/failure handling (persistedConversationId
+    // sync, error rollback into verifiedAwaitingSend) can't drift between
+    // the two entry points.
+    const trySendPostAuthMessage = async () => {
+      try {
+        // Small delay to allow migration events to be processed (they arrive before auth.upgraded)
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        const snap = client.getSnapshot();
+        const conversationId = snap.activeConversationId ?? snap.conversations[0]?.id;
+        if (pendingPrompt) {
+          // No `if (conversationId)` gate — sendMessage creates a new
+          // conversation when the id is omitted, which is exactly the
+          // case for a first-message auth-gated suggestion click.
+          const result = await client.sendMessage(
+            pendingPrompt,
+            conversationId ? { conversationId } : {},
+          );
+          // Hand the resolved conversation id back to the outer scope so
+          // persistedConversationId stays in sync. Without this, the
+          // user's next message would target a stale id (or none) and
+          // could spawn a second server conversation.
+          if (result?.conversationId) {
+            options?.onPendingPromptSent?.(result.conversationId);
+          }
+          // Successful send clears any prior retry-state from a failed
+          // delivery attempt and reveals the success message.
+          verifiedAwaitingSend = false;
+          successMessage.style.display = 'block';
+          form.style.display = 'none';
+          hideStatus();
+        } else if (conversationId) {
+          await client.sendMessage('{hidden_message}"auth_success"{hidden_message/}', {
+            conversationId,
+          });
+        }
+      } catch (error) {
+        if (pendingPrompt) {
+          // The held prompt is the user's first real message — if it
+          // didn't reach the agent, "you're verified" is half-true.
+          // Enter the verifiedAwaitingSend state: hide the success card,
+          // show the form (which under updateUI() will display only a
+          // "Retry sending" button — no inputs, no OTP digits), and
+          // surface the actual error inline. The action button will
+          // re-route through this same helper rather than restarting
+          // the OTP flow for an already-verified user.
+          verifiedAwaitingSend = true;
+          successMessage.style.display = 'none';
+          form.style.display = '';
+          isVerifyingCode = false;
+          updateUI();
+          showStatus(
+            `Verified, but I couldn't send your request: ${error instanceof Error ? error.message : 'Unknown error'}. Tap Retry sending to try again.`,
+            'error',
+          );
+        } else {
+          // auth_success hidden ping is non-critical; keep the prior
+          // log-and-continue behaviour.
+          console.warn('[VanillaChat] Failed to send post-auth message:', error);
+        }
+      }
+    };
+
     const handleSubmit = async () => {
       if (isSendingCode || isVerifyingCode) return;
 
       hideStatus();
+
+      // verifiedAwaitingSend: OTP succeeded earlier but the held prompt
+      // failed to deliver. The action button now reads "Retry sending"
+      // and we route back through trySendPostAuthMessage instead of
+      // re-running the OTP flow for an already-verified user. Reuse
+      // isSendingCode as the in-flight guard so rapid double-clicks
+      // can't fire concurrent sendMessage calls (the guard at the top
+      // of handleSubmit already early-returns when isSendingCode is
+      // true). updateUI() disables the action button and inputs while
+      // the send is in flight; we restore both regardless of outcome.
+      if (verifiedAwaitingSend) {
+        isSendingCode = true;
+        updateUI();
+        try {
+          await trySendPostAuthMessage();
+        } finally {
+          isSendingCode = false;
+          updateUI();
+        }
+        return;
+      }
 
       if (!waitingForCode) {
         // Start login flow
@@ -1929,56 +2031,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
           // we held the prompt back, did OTP, and now deliver the actual user
           // intent so the LLM responds to it directly instead of needing a
           // second round-trip after `auth_success`.
-          try {
-            // Small delay to allow migration events to be processed (they arrive before auth.upgraded)
-            await new Promise(resolve => setTimeout(resolve, 100));
-
-            const snap = client.getSnapshot();
-            const conversationId = snap.activeConversationId ?? snap.conversations[0]?.id;
-            if (pendingPrompt) {
-              // No `if (conversationId)` gate — sendMessage creates a new
-              // conversation when the id is omitted, which is exactly the
-              // case for a first-message auth-gated suggestion click.
-              const result = await client.sendMessage(
-                pendingPrompt,
-                conversationId ? { conversationId } : {},
-              );
-              // Hand the resolved conversation id back to the outer scope so
-              // persistedConversationId stays in sync. Without this, the next
-              // user message would target a stale id (or none) and could
-              // spawn a second server conversation.
-              if (result?.conversationId) {
-                options?.onPendingPromptSent?.(result.conversationId);
-              }
-            } else if (conversationId) {
-              await client.sendMessage('{hidden_message}"auth_success"{hidden_message/}', {
-                conversationId,
-              });
-            }
-          } catch (error) {
-            if (pendingPrompt) {
-              // The held prompt is the user's first real message — if it
-              // didn't reach the agent, "you're verified" is a lie. Roll
-              // back to the form so the user can retry or take an
-              // alternative path, and show a visible error. Also reset
-              // the verification-state flags + updateUI() — otherwise
-              // isVerifyingCode would stay true and the form inputs
-              // would remain disabled even though they're back on screen.
-              successMessage.style.display = 'none';
-              form.style.display = '';
-              isVerifyingCode = false;
-              waitingForCode = false;
-              updateUI();
-              showStatus(
-                `Verified, but I couldn't send your request: ${error instanceof Error ? error.message : 'Unknown error'}. Please try again.`,
-                'error',
-              );
-            } else {
-              // auth_success hidden ping is non-critical; keep the prior
-              // log-and-continue behaviour.
-              console.warn('[VanillaChat] Failed to send post-auth message:', error);
-            }
-          }
+          await trySendPostAuthMessage();
 
           // Notify auth state change listeners
           authManager.onAuthStateChange(() => {
@@ -2823,15 +2876,21 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     const prompt = button.dataset.suggestionPrompt ?? button.textContent ?? '';
     const requiresAuth = button.dataset.suggestionRequiresAuth === 'true';
     const handleSuggestionClick = () => {
-      // Auth-gated suggestions: when the user is anonymous OR auth isn't
-      // configured, render the verification card immediately and hold the
-      // prompt until verification succeeds. The post-auth path in
-      // createVerificationFlowComponent then sends the held prompt as the
-      // first real message. Authenticated users fall through to the normal
-      // send. If auth isn't wired up at all, the verification card renders
-      // its own configuration-error message instead of silently sending the
+      // Auth-gated suggestions: when the user is anonymous AND not
+      // passwordless-authenticated, render the verification card
+      // immediately and hold the prompt until verification succeeds. The
+      // post-auth path in createVerificationFlowComponent then sends the
+      // held prompt as the first real message. Hosts authenticated via
+      // the SDK's token-exchange path (`anonymous === false`) are already
+      // logged in and should fall through to the normal send — only
+      // checking passwordlessAuth would force them into the OTP flow
+      // unnecessarily. If neither auth mode is configured for an
+      // anonymous user, the verification card renders its own
+      // configuration-error message instead of silently sending the
       // gated prompt anyway (which would defeat the whole gate).
-      if (requiresAuth && !(passwordlessAuth?.isAuthenticated() ?? false)) {
+      const isHostAuthenticated =
+        !anonymous || (passwordlessAuth?.isAuthenticated() ?? false);
+      if (requiresAuth && !isHostAuthenticated) {
         setExpanded(true);
         appendOptimisticUserBubble(prompt);
         const row = document.createElement('div');
