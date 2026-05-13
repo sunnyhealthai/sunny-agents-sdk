@@ -2053,22 +2053,15 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     useDifferentLink.textContent = 'Use a different phone number';
     useDifferentLink.style.display = 'none';
     useDifferentLink.addEventListener('click', () => {
-      if (isSendingCode || isVerifyingCode) return;
-      waitingForCode = false;
-      currentPhone = null;
-      clearCodeInputs();
-      hideStatus();
-      stopResendTimer();
+      // Common reset (state flags, code inputs, status, success banner,
+      // form visibility). The escape-hatch-specific bits — restoring the
+      // resend button copy, re-showing the phone row, clearing the
+      // entered digits — sit alongside.
+      resetToFreshInput();
       resendLink.textContent = 'Resend code';
       resendLink.disabled = true;
       phoneRow.style.display = 'flex';
       phoneInput.clear();
-      useDifferentLink.style.display = 'none';
-      // Restore the input form and hide any prior success banner so the
-      // user sees a fresh verification UI (SUN-771).
-      successMessage.style.display = 'none';
-      form.style.display = '';
-      updateUI();
     });
 
     form.appendChild(inputGroup);
