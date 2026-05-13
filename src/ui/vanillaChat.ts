@@ -1,3 +1,6 @@
+import { AsYouType, getCountries, getCountryCallingCode, getExampleNumber, parsePhoneNumberFromString } from 'libphonenumber-js/min';
+import examples from 'libphonenumber-js/examples.mobile.json';
+import type { CountryCode } from 'libphonenumber-js/min';
 import { SunnyAgentsClient } from '../client/SunnyAgentsClient';
 import type { LLMWebSocketManager } from '../client/llmWebSocket';
 import type { PasswordlessAuthManager } from '../client/passwordlessAuth';
@@ -151,268 +154,449 @@ function normalizePromptSuggestions(
   );
 }
 
-/** Complete E.164 country calling codes for phone region dropdown. Sorted numerically, US first. */
-const COUNTRY_CODES: { code: string; label: string }[] = [
-  { code: '1', label: '+1 United States' },
-  { code: '1', label: '+1 Canada' },
-  { code: '1', label: '+1 Bahamas' },
-  { code: '1', label: '+1 Barbados' },
-  { code: '1', label: '+1 Anguilla' },
-  { code: '1', label: '+1 Antigua and Barbuda' },
-  { code: '1', label: '+1 British Virgin Islands' },
-  { code: '1', label: '+1 Cayman Islands' },
-  { code: '1', label: '+1 Bermuda' },
-  { code: '1', label: '+1 Dominica' },
-  { code: '1', label: '+1 Dominican Republic' },
-  { code: '1', label: '+1 Grenada' },
-  { code: '1', label: '+1 Jamaica' },
-  { code: '1', label: '+1 Montserrat' },
-  { code: '1', label: '+1 Northern Mariana Islands' },
-  { code: '1', label: '+1 Puerto Rico' },
-  { code: '1', label: '+1 Saint Kitts and Nevis' },
-  { code: '1', label: '+1 Saint Lucia' },
-  { code: '1', label: '+1 Saint Vincent and the Grenadines' },
-  { code: '1', label: '+1 Sint Maarten' },
-  { code: '1', label: '+1 Trinidad and Tobago' },
-  { code: '1', label: '+1 Turks and Caicos Islands' },
-  { code: '1', label: '+1 US Virgin Islands' },
-  { code: '1', label: '+1 American Samoa' },
-  { code: '1', label: '+1 Guam' },
-  { code: '7', label: '+7 Russia' },
-  { code: '7', label: '+7 Kazakhstan' },
-  { code: '20', label: '+20 Egypt' },
-  { code: '211', label: '+211 South Sudan' },
-  { code: '212', label: '+212 Morocco' },
-  { code: '212', label: '+212 Western Sahara' },
-  { code: '213', label: '+213 Algeria' },
-  { code: '216', label: '+216 Tunisia' },
-  { code: '218', label: '+218 Libya' },
-  { code: '220', label: '+220 Gambia' },
-  { code: '221', label: '+221 Senegal' },
-  { code: '222', label: '+222 Mauritania' },
-  { code: '223', label: '+223 Mali' },
-  { code: '224', label: '+224 Guinea' },
-  { code: '225', label: '+225 Ivory Coast' },
-  { code: '226', label: '+226 Burkina Faso' },
-  { code: '227', label: '+227 Niger' },
-  { code: '228', label: '+228 Togo' },
-  { code: '229', label: '+229 Benin' },
-  { code: '230', label: '+230 Mauritius' },
-  { code: '231', label: '+231 Liberia' },
-  { code: '232', label: '+232 Sierra Leone' },
-  { code: '233', label: '+233 Ghana' },
-  { code: '234', label: '+234 Nigeria' },
-  { code: '235', label: '+235 Chad' },
-  { code: '236', label: '+236 Central African Republic' },
-  { code: '237', label: '+237 Cameroon' },
-  { code: '238', label: '+238 Cape Verde' },
-  { code: '239', label: '+239 São Tomé and Príncipe' },
-  { code: '240', label: '+240 Equatorial Guinea' },
-  { code: '241', label: '+241 Gabon' },
-  { code: '242', label: '+242 Republic of the Congo' },
-  { code: '243', label: '+243 Democratic Republic of the Congo' },
-  { code: '244', label: '+244 Angola' },
-  { code: '245', label: '+245 Guinea-Bissau' },
-  { code: '246', label: '+246 British Indian Ocean Territory' },
-  { code: '247', label: '+247 Ascension Island' },
-  { code: '248', label: '+248 Seychelles' },
-  { code: '249', label: '+249 Sudan' },
-  { code: '250', label: '+250 Rwanda' },
-  { code: '251', label: '+251 Ethiopia' },
-  { code: '252', label: '+252 Somalia' },
-  { code: '253', label: '+253 Djibouti' },
-  { code: '254', label: '+254 Kenya' },
-  { code: '255', label: '+255 Tanzania' },
-  { code: '256', label: '+256 Uganda' },
-  { code: '257', label: '+257 Burundi' },
-  { code: '258', label: '+258 Mozambique' },
-  { code: '260', label: '+260 Zambia' },
-  { code: '261', label: '+261 Madagascar' },
-  { code: '262', label: '+262 Réunion' },
-  { code: '262', label: '+262 Mayotte' },
-  { code: '263', label: '+263 Zimbabwe' },
-  { code: '264', label: '+264 Namibia' },
-  { code: '265', label: '+265 Malawi' },
-  { code: '266', label: '+266 Lesotho' },
-  { code: '267', label: '+267 Botswana' },
-  { code: '268', label: '+268 Eswatini' },
-  { code: '269', label: '+269 Comoros' },
-  { code: '290', label: '+290 Saint Helena' },
-  { code: '290', label: '+290 Tristan da Cunha' },
-  { code: '291', label: '+291 Eritrea' },
-  { code: '297', label: '+297 Aruba' },
-  { code: '298', label: '+298 Faroe Islands' },
-  { code: '299', label: '+299 Greenland' },
-  { code: '30', label: '+30 Greece' },
-  { code: '31', label: '+31 Netherlands' },
-  { code: '32', label: '+32 Belgium' },
-  { code: '33', label: '+33 France' },
-  { code: '34', label: '+34 Spain' },
-  { code: '36', label: '+36 Hungary' },
-  { code: '39', label: '+39 Italy' },
-  { code: '39', label: '+39 Vatican City' },
-  { code: '350', label: '+350 Gibraltar' },
-  { code: '351', label: '+351 Portugal' },
-  { code: '352', label: '+352 Luxembourg' },
-  { code: '353', label: '+353 Ireland' },
-  { code: '354', label: '+354 Iceland' },
-  { code: '355', label: '+355 Albania' },
-  { code: '356', label: '+356 Malta' },
-  { code: '357', label: '+357 Cyprus' },
-  { code: '358', label: '+358 Finland' },
-  { code: '358', label: '+358 Åland Islands' },
-  { code: '359', label: '+359 Bulgaria' },
-  { code: '370', label: '+370 Lithuania' },
-  { code: '371', label: '+371 Latvia' },
-  { code: '372', label: '+372 Estonia' },
-  { code: '373', label: '+373 Moldova' },
-  { code: '374', label: '+374 Armenia' },
-  { code: '375', label: '+375 Belarus' },
-  { code: '376', label: '+376 Andorra' },
-  { code: '377', label: '+377 Monaco' },
-  { code: '378', label: '+378 San Marino' },
-  { code: '379', label: '+379 Vatican City' },
-  { code: '380', label: '+380 Ukraine' },
-  { code: '381', label: '+381 Serbia' },
-  { code: '382', label: '+382 Montenegro' },
-  { code: '383', label: '+383 Kosovo' },
-  { code: '385', label: '+385 Croatia' },
-  { code: '386', label: '+386 Slovenia' },
-  { code: '387', label: '+387 Bosnia and Herzegovina' },
-  { code: '389', label: '+389 North Macedonia' },
-  { code: '40', label: '+40 Romania' },
-  { code: '41', label: '+41 Switzerland' },
-  { code: '43', label: '+43 Austria' },
-  { code: '44', label: '+44 United Kingdom' },
-  { code: '44', label: '+44 Guernsey' },
-  { code: '44', label: '+44 Isle of Man' },
-  { code: '44', label: '+44 Jersey' },
-  { code: '45', label: '+45 Denmark' },
-  { code: '46', label: '+46 Sweden' },
-  { code: '47', label: '+47 Norway' },
-  { code: '47', label: '+47 Svalbard and Jan Mayen' },
-  { code: '48', label: '+48 Poland' },
-  { code: '49', label: '+49 Germany' },
-  { code: '420', label: '+420 Czech Republic' },
-  { code: '421', label: '+421 Slovakia' },
-  { code: '423', label: '+423 Liechtenstein' },
-  { code: '500', label: '+500 Falkland Islands' },
-  { code: '500', label: '+500 South Georgia and the South Sandwich Islands' },
-  { code: '501', label: '+501 Belize' },
-  { code: '502', label: '+502 Guatemala' },
-  { code: '503', label: '+503 El Salvador' },
-  { code: '504', label: '+504 Honduras' },
-  { code: '505', label: '+505 Nicaragua' },
-  { code: '506', label: '+506 Costa Rica' },
-  { code: '507', label: '+507 Panama' },
-  { code: '508', label: '+508 Saint Pierre and Miquelon' },
-  { code: '509', label: '+509 Haiti' },
-  { code: '51', label: '+51 Peru' },
-  { code: '52', label: '+52 Mexico' },
-  { code: '53', label: '+53 Cuba' },
-  { code: '54', label: '+54 Argentina' },
-  { code: '55', label: '+55 Brazil' },
-  { code: '56', label: '+56 Chile' },
-  { code: '57', label: '+57 Colombia' },
-  { code: '58', label: '+58 Venezuela' },
-  { code: '590', label: '+590 Guadeloupe' },
-  { code: '590', label: '+590 Saint Barthélemy' },
-  { code: '590', label: '+590 Saint Martin' },
-  { code: '591', label: '+591 Bolivia' },
-  { code: '592', label: '+592 Guyana' },
-  { code: '593', label: '+593 Ecuador' },
-  { code: '594', label: '+594 French Guiana' },
-  { code: '595', label: '+595 Paraguay' },
-  { code: '596', label: '+596 Martinique' },
-  { code: '597', label: '+597 Suriname' },
-  { code: '598', label: '+598 Uruguay' },
-  { code: '599', label: '+599 Caribbean Netherlands' },
-  { code: '599', label: '+599 Curaçao' },
-  { code: '60', label: '+60 Malaysia' },
-  { code: '61', label: '+61 Australia' },
-  { code: '61', label: '+61 Christmas Island' },
-  { code: '61', label: '+61 Cocos Islands' },
-  { code: '62', label: '+62 Indonesia' },
-  { code: '63', label: '+63 Philippines' },
-  { code: '64', label: '+64 New Zealand' },
-  { code: '64', label: '+64 Pitcairn Islands' },
-  { code: '65', label: '+65 Singapore' },
-  { code: '66', label: '+66 Thailand' },
-  { code: '670', label: '+670 Timor-Leste' },
-  { code: '672', label: '+672 Norfolk Island' },
-  { code: '672', label: '+672 Australian Antarctic Territory' },
-  { code: '673', label: '+673 Brunei' },
-  { code: '674', label: '+674 Nauru' },
-  { code: '675', label: '+675 Papua New Guinea' },
-  { code: '676', label: '+676 Tonga' },
-  { code: '677', label: '+677 Solomon Islands' },
-  { code: '678', label: '+678 Vanuatu' },
-  { code: '679', label: '+679 Fiji' },
-  { code: '680', label: '+680 Palau' },
-  { code: '681', label: '+681 Wallis and Futuna' },
-  { code: '682', label: '+682 Cook Islands' },
-  { code: '683', label: '+683 Niue' },
-  { code: '685', label: '+685 Samoa' },
-  { code: '686', label: '+686 Kiribati' },
-  { code: '687', label: '+687 New Caledonia' },
-  { code: '688', label: '+688 Tuvalu' },
-  { code: '689', label: '+689 French Polynesia' },
-  { code: '690', label: '+690 Tokelau' },
-  { code: '691', label: '+691 Micronesia' },
-  { code: '692', label: '+692 Marshall Islands' },
-  { code: '81', label: '+81 Japan' },
-  { code: '82', label: '+82 South Korea' },
-  { code: '84', label: '+84 Vietnam' },
-  { code: '850', label: '+850 North Korea' },
-  { code: '852', label: '+852 Hong Kong' },
-  { code: '853', label: '+853 Macau' },
-  { code: '855', label: '+855 Cambodia' },
-  { code: '856', label: '+856 Laos' },
-  { code: '86', label: '+86 China' },
-  { code: '90', label: '+90 Turkey' },
-  { code: '90', label: '+90 Northern Cyprus' },
-  { code: '91', label: '+91 India' },
-  { code: '92', label: '+92 Pakistan' },
-  { code: '93', label: '+93 Afghanistan' },
-  { code: '94', label: '+94 Sri Lanka' },
-  { code: '95', label: '+95 Myanmar' },
-  { code: '880', label: '+880 Bangladesh' },
-  { code: '960', label: '+960 Maldives' },
-  { code: '961', label: '+961 Lebanon' },
-  { code: '962', label: '+962 Jordan' },
-  { code: '963', label: '+963 Syria' },
-  { code: '964', label: '+964 Iraq' },
-  { code: '965', label: '+965 Kuwait' },
-  { code: '966', label: '+966 Saudi Arabia' },
-  { code: '967', label: '+967 Yemen' },
-  { code: '968', label: '+968 Oman' },
-  { code: '886', label: '+886 Taiwan' },
-  { code: '970', label: '+970 Palestine' },
-  { code: '971', label: '+971 United Arab Emirates' },
-  { code: '972', label: '+972 Israel' },
-  { code: '973', label: '+973 Bahrain' },
-  { code: '974', label: '+974 Qatar' },
-  { code: '975', label: '+975 Bhutan' },
-  { code: '976', label: '+976 Mongolia' },
-  { code: '977', label: '+977 Nepal' },
-  { code: '98', label: '+98 Iran' },
-  { code: '992', label: '+992 Tajikistan' },
-  { code: '993', label: '+993 Turkmenistan' },
-  { code: '994', label: '+994 Azerbaijan' },
-  { code: '995', label: '+995 Georgia' },
-  { code: '996', label: '+996 Kyrgyzstan' },
-  { code: '998', label: '+998 Uzbekistan' },
-];
+/**
+ * Country list built from libphonenumber-js. Each entry has the ISO-2 code,
+ * the flag emoji (computed from the ISO-2 regional-indicator codepoints), a
+ * localized display name (via Intl.DisplayNames with an "en" fallback for
+ * older browsers), and the E.164 calling code. Sorted alphabetically by name
+ * with United States pinned to the top.
+ */
+export interface CountryEntry {
+  iso: CountryCode;
+  flag: string;
+  name: string;
+  code: string;
+}
 
-// Sort numerically by code, with United States first
-COUNTRY_CODES.sort((a, b) => {
-  const numA = parseInt(a.code, 10);
-  const numB = parseInt(b.code, 10);
-  if (numA !== numB) return numA - numB;
-  if (a.label.includes('United States')) return -1;
-  if (b.label.includes('United States')) return 1;
-  return a.label.localeCompare(b.label);
-});
+function isoToFlag(iso: string): string {
+  return [...iso.toUpperCase()]
+    .map((ch) => String.fromCodePoint(0x1f1e6 + ch.charCodeAt(0) - 65))
+    .join('');
+}
+
+const COUNTRY_LIST: CountryEntry[] = (() => {
+  let displayNames: { of: (iso: string) => string | undefined } | null = null;
+  try {
+    displayNames = new (Intl as any).DisplayNames(['en'], { type: 'region' });
+  } catch {
+    displayNames = null;
+  }
+  const entries: CountryEntry[] = getCountries().map((iso) => ({
+    iso,
+    flag: isoToFlag(iso),
+    name: displayNames?.of(iso) ?? iso,
+    code: getCountryCallingCode(iso),
+  }));
+  entries.sort((a, b) => {
+    if (a.iso === 'US') return -1;
+    if (b.iso === 'US') return 1;
+    return a.name.localeCompare(b.name);
+  });
+  return entries;
+})();
+
+const COUNTRY_BY_ISO: Map<CountryCode, CountryEntry> = new Map(
+  COUNTRY_LIST.map((entry) => [entry.iso, entry]),
+);
+
+interface CountryPicker {
+  el: HTMLElement;
+  getIso(): CountryCode;
+  getCode(): string;
+  setIso(iso: CountryCode): void;
+  setDisabled(disabled: boolean): void;
+  onChange(handler: (iso: CountryCode) => void): void;
+}
+
+/**
+ * Custom country dropdown. Closed state shows only the flag emoji + chevron.
+ * Open popover shows "🇺🇸 United States (+1)" rows with a search filter.
+ * Keyboard: ArrowUp/Down navigate, Enter selects, Escape closes.
+ */
+function createCountryPicker(initialIso: CountryCode = 'US'): CountryPicker {
+  let currentIso: CountryCode = COUNTRY_BY_ISO.has(initialIso) ? initialIso : 'US';
+  let isOpen = false;
+  let disabled = false;
+  let changeHandler: ((iso: CountryCode) => void) | null = null;
+  let focusedIndex = -1;
+  let filtered: CountryEntry[] = COUNTRY_LIST.slice();
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'sunny-country-picker';
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'sunny-country-picker__button';
+  button.setAttribute('aria-haspopup', 'listbox');
+  button.setAttribute('aria-expanded', 'false');
+  button.setAttribute('aria-label', 'Country or region');
+
+  const flagEl = document.createElement('span');
+  flagEl.className = 'sunny-country-picker__flag';
+  flagEl.setAttribute('aria-hidden', 'true');
+  const chevronEl = document.createElement('span');
+  chevronEl.className = 'sunny-country-picker__chevron';
+  chevronEl.setAttribute('aria-hidden', 'true');
+  chevronEl.textContent = '▾';
+  button.appendChild(flagEl);
+  button.appendChild(chevronEl);
+
+  const popover = document.createElement('div');
+  popover.className = 'sunny-country-picker__popover';
+  popover.setAttribute('role', 'listbox');
+  popover.hidden = true;
+
+  const searchInput = document.createElement('input');
+  searchInput.type = 'text';
+  searchInput.className = 'sunny-country-picker__search';
+  searchInput.placeholder = 'Search country';
+  searchInput.setAttribute('aria-label', 'Search country');
+  searchInput.autocomplete = 'off';
+
+  const listEl = document.createElement('div');
+  listEl.className = 'sunny-country-picker__list';
+
+  popover.appendChild(searchInput);
+  popover.appendChild(listEl);
+  wrapper.appendChild(button);
+  wrapper.appendChild(popover);
+
+  const renderButton = () => {
+    const entry = COUNTRY_BY_ISO.get(currentIso);
+    flagEl.textContent = entry?.flag ?? '🌐';
+    button.setAttribute('aria-label', entry ? `Country or region: ${entry.name}` : 'Country or region');
+  };
+
+  const renderList = () => {
+    listEl.innerHTML = '';
+    if (filtered.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'sunny-country-picker__empty';
+      empty.textContent = 'No matches';
+      listEl.appendChild(empty);
+      return;
+    }
+    filtered.forEach((entry, i) => {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'sunny-country-picker__row';
+      row.dataset.iso = entry.iso;
+      row.setAttribute('role', 'option');
+      if (entry.iso === currentIso) {
+        row.classList.add('sunny-country-picker__row--selected');
+        row.setAttribute('aria-selected', 'true');
+      }
+      if (i === focusedIndex) {
+        row.classList.add('sunny-country-picker__row--focused');
+      }
+      const flag = document.createElement('span');
+      flag.className = 'sunny-country-picker__row-flag';
+      flag.textContent = entry.flag;
+      flag.setAttribute('aria-hidden', 'true');
+      const name = document.createElement('span');
+      name.className = 'sunny-country-picker__row-name';
+      name.textContent = entry.name;
+      const code = document.createElement('span');
+      code.className = 'sunny-country-picker__row-code';
+      code.textContent = `(+${entry.code})`;
+      row.appendChild(flag);
+      row.appendChild(name);
+      row.appendChild(code);
+      row.addEventListener('click', (e) => {
+        e.preventDefault();
+        select(entry.iso);
+      });
+      listEl.appendChild(row);
+    });
+    // Scroll focused row into view
+    if (focusedIndex >= 0) {
+      const focusedEl = listEl.children[focusedIndex] as HTMLElement | undefined;
+      focusedEl?.scrollIntoView({ block: 'nearest' });
+    }
+  };
+
+  const applyFilter = (query: string) => {
+    const q = query.trim().toLowerCase();
+    if (!q) {
+      filtered = COUNTRY_LIST.slice();
+    } else {
+      filtered = COUNTRY_LIST.filter(
+        (entry) =>
+          entry.name.toLowerCase().includes(q) ||
+          entry.iso.toLowerCase().includes(q) ||
+          entry.code.includes(q.replace(/^\+/, '')),
+      );
+    }
+    focusedIndex = filtered.findIndex((e) => e.iso === currentIso);
+    if (focusedIndex === -1 && filtered.length > 0) focusedIndex = 0;
+    renderList();
+  };
+
+  const onDocumentMouseDown = (e: MouseEvent) => {
+    if (!isOpen) return;
+    if (!wrapper.contains(e.target as Node)) close();
+  };
+
+  const open = () => {
+    if (disabled || isOpen) return;
+    isOpen = true;
+    popover.hidden = false;
+    button.setAttribute('aria-expanded', 'true');
+    searchInput.value = '';
+    applyFilter('');
+    searchInput.focus();
+    // Only register the outside-click handler while the popover is open. The
+    // previous version registered one document listener per picker at
+    // construction time and never removed it, which leaked global handlers
+    // every time the verification card re-rendered.
+    document.addEventListener('mousedown', onDocumentMouseDown);
+  };
+
+  const close = () => {
+    if (!isOpen) return;
+    isOpen = false;
+    popover.hidden = true;
+    button.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('mousedown', onDocumentMouseDown);
+  };
+
+  const select = (iso: CountryCode) => {
+    const changed = iso !== currentIso;
+    currentIso = iso;
+    renderButton();
+    close();
+    if (changed && changeHandler) changeHandler(iso);
+  };
+
+  button.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (isOpen) close();
+    else open();
+  });
+
+  searchInput.addEventListener('input', () => {
+    applyFilter(searchInput.value);
+  });
+
+  searchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      close();
+      button.focus();
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (filtered.length === 0) return;
+      focusedIndex = (focusedIndex + 1) % filtered.length;
+      renderList();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (filtered.length === 0) return;
+      focusedIndex = (focusedIndex - 1 + filtered.length) % filtered.length;
+      renderList();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const target = filtered[focusedIndex];
+      if (target) select(target.iso);
+    }
+  });
+
+  renderButton();
+
+  return {
+    el: wrapper,
+    getIso: () => currentIso,
+    getCode: () => COUNTRY_BY_ISO.get(currentIso)?.code ?? '1',
+    setIso: (iso) => {
+      if (COUNTRY_BY_ISO.has(iso)) {
+        currentIso = iso;
+        renderButton();
+      }
+    },
+    setDisabled: (d) => {
+      disabled = d;
+      button.disabled = d;
+      if (d) close();
+    },
+    onChange: (handler) => {
+      changeHandler = handler;
+    },
+  };
+}
+
+interface DigitBubblePhoneInput {
+  el: HTMLElement;
+  getDigits(): string;
+  setDigits(digits: string): void;
+  setIso(iso: CountryCode): void;
+  setDisabled(disabled: boolean): void;
+  focus(): void;
+  clear(): void;
+}
+
+/**
+ * Renders a phone number as a sequence of digit cells with country-specific
+ * separator glyphs (e.g. `(___) ___-____` for US). Uses libphonenumber-js
+ * AsYouType + example numbers to derive the mask. A hidden <input type="tel">
+ * is the source of truth for the value; cells re-render on input/blur and
+ * relay keystrokes back to the hidden input. Maintains accessibility via the
+ * hidden input's label.
+ */
+function createDigitBubblePhoneInput(initialIso: CountryCode = 'US'): DigitBubblePhoneInput {
+  let currentIso: CountryCode = COUNTRY_BY_ISO.has(initialIso) ? initialIso : 'US';
+  let digits = '';
+  let disabled = false;
+
+  const getExpectedDigitCount = (iso: CountryCode): number => {
+    try {
+      const example = getExampleNumber(iso, examples as any);
+      if (example) return example.nationalNumber.length;
+    } catch {
+      // fall through
+    }
+    return 10;
+  };
+
+  const getFormatted = (iso: CountryCode, raw: string): string => {
+    if (!raw) return '';
+    try {
+      const formatter = new AsYouType(iso);
+      return formatter.input(raw);
+    } catch {
+      return raw;
+    }
+  };
+
+  const getMask = (iso: CountryCode): string => {
+    const example = (() => {
+      try {
+        return getExampleNumber(iso, examples as any);
+      } catch {
+        return null;
+      }
+    })();
+    if (!example) {
+      return '__________';
+    }
+    const formatted = example.formatNational();
+    // Strip the leading country code-like prefix if present (some locales include it).
+    return formatted.replace(/\d/g, '_');
+  };
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'sunny-digit-phone';
+
+  const cellsEl = document.createElement('div');
+  cellsEl.className = 'sunny-digit-phone__cells';
+  cellsEl.setAttribute('aria-hidden', 'true');
+
+  // Hidden text input — the real keyboard target. Holds digits only.
+  const hidden = document.createElement('input');
+  hidden.type = 'tel';
+  hidden.className = 'sunny-digit-phone__input';
+  hidden.inputMode = 'numeric';
+  hidden.autocomplete = 'tel-national';
+  hidden.setAttribute('aria-label', 'Phone number');
+
+  wrapper.appendChild(cellsEl);
+  wrapper.appendChild(hidden);
+
+  const render = () => {
+    cellsEl.innerHTML = '';
+    const mask = getMask(currentIso);
+    const expected = getExpectedDigitCount(currentIso);
+    let digitCursor = 0;
+    const overflow = digits.length > expected;
+    for (const ch of mask) {
+      if (ch === '_') {
+        const cell = document.createElement('span');
+        cell.className = 'sunny-digit-phone__cell';
+        const d = digits[digitCursor++];
+        if (d !== undefined) {
+          cell.textContent = d;
+          cell.classList.add('sunny-digit-phone__cell--filled');
+        } else {
+          cell.textContent = '';
+        }
+        // Mark the next-empty cell as the "active" one for caret styling.
+        if (d === undefined && digitCursor - 1 === digits.length && !disabled) {
+          cell.classList.add('sunny-digit-phone__cell--active');
+        }
+        cellsEl.appendChild(cell);
+      } else {
+        const sep = document.createElement('span');
+        sep.className = 'sunny-digit-phone__sep';
+        sep.textContent = ch;
+        cellsEl.appendChild(sep);
+      }
+    }
+    // Render any overflow digits in a trailing run so users see what they typed
+    // even when they exceed the expected length (some carriers tolerate trailing
+    // digits; we'd rather show than silently swallow).
+    if (overflow) {
+      for (let i = expected; i < digits.length; i++) {
+        const cell = document.createElement('span');
+        cell.className = 'sunny-digit-phone__cell sunny-digit-phone__cell--filled sunny-digit-phone__cell--overflow';
+        cell.textContent = digits[i] ?? '';
+        cellsEl.appendChild(cell);
+      }
+    }
+  };
+
+  // Focus the hidden input when the user clicks the cells row.
+  wrapper.addEventListener('click', (e) => {
+    if (disabled) return;
+    if (e.target === hidden) return;
+    e.preventDefault();
+    hidden.focus();
+  });
+
+  hidden.addEventListener('input', () => {
+    const newDigits = hidden.value.replace(/\D/g, '');
+    digits = newDigits;
+    // Surface the formatted value in the hidden input's accessible name via aria.
+    const formatted = getFormatted(currentIso, digits);
+    hidden.setAttribute('data-formatted', formatted);
+    render();
+  });
+
+  hidden.addEventListener('focus', () => {
+    wrapper.classList.add('sunny-digit-phone--focused');
+    render();
+  });
+  hidden.addEventListener('blur', () => {
+    wrapper.classList.remove('sunny-digit-phone--focused');
+    render();
+  });
+
+  render();
+
+  return {
+    el: wrapper,
+    getDigits: () => digits,
+    setDigits: (d) => {
+      digits = (d || '').replace(/\D/g, '');
+      hidden.value = digits;
+      render();
+    },
+    setIso: (iso) => {
+      if (!COUNTRY_BY_ISO.has(iso)) return;
+      currentIso = iso;
+      render();
+    },
+    setDisabled: (d) => {
+      disabled = d;
+      hidden.disabled = d;
+      render();
+    },
+    focus: () => hidden.focus(),
+    clear: () => {
+      digits = '';
+      hidden.value = '';
+      render();
+    },
+  };
+}
+
 
 type ArtifactSegment =
   | { type: 'text'; value: string }
@@ -428,7 +612,7 @@ type ArtifactSegment =
   | { type: 'provider_name_search_results'; data: ProviderNameSearchResultsArtifact }
   | { type: 'location_detail'; data: LocationDetailArtifact }
   | { type: 'verification_flow'; action: string; phone?: string; email?: string }
-  | { type: 'scheduling_progress'; data: SchedulingProgressArtifact }
+  | { type: 'scheduling_progress'; data: SchedulingProgressArtifact | null }
   | { type: 'email_confirm'; email: string };
 type ApprovalState = 'approved' | 'rejected';
 
@@ -549,12 +733,6 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
             <path d="M6 6l12 12M6 18L18 6" stroke-linecap="round" />
           </svg>
         </button>
-        <div class="sunny-chat__progress" role="status" aria-live="polite" hidden>
-          <div class="sunny-chat__progress-label"></div>
-          <div class="sunny-chat__progress-track">
-            <div class="sunny-chat__progress-fill"></div>
-          </div>
-        </div>
         <div class="sunny-chat__messages" aria-live="polite"></div>
         <div class="sunny-chat-modal__composer">
           <input type="text" class="sunny-chat-modal__input" placeholder="${escapeHtml(placeholder)}" aria-label="${escapeHtml(placeholder)}" />
@@ -602,40 +780,21 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   const triggerInput = root.querySelector('.sunny-chat__trigger-input') as HTMLInputElement;
   const triggerSendBtn = triggerContainer.querySelector('.sunny-chat__send-btn') as HTMLButtonElement;
   const suggestionButtons = Array.from(root.querySelectorAll('.sunny-chat__suggestion-btn')) as HTMLButtonElement[];
-  const progressEl = root.querySelector('.sunny-chat__progress') as HTMLElement;
-  const progressLabelEl = progressEl.querySelector('.sunny-chat__progress-label') as HTMLElement;
-  const progressFillEl = progressEl.querySelector('.sunny-chat__progress-fill') as HTMLElement;
-
   let unsubscribes: Array<() => void> = [];
   let latestSnapshot: SunnyAgentsClientSnapshot | null = null;
   let isExpanded = false;
   let isClosing = false; // Flag to prevent immediate reopen on focus
-  let latestProgress: SchedulingProgressArtifact | null = null;
-  let progressConversationId: string | null = null;
 
-  const applySchedulingProgress = (data: SchedulingProgressArtifact) => {
-    if (data.completed) {
-      latestProgress = null;
-      progressEl.hidden = true;
-      return;
-    }
-    const total = Math.max(1, data.total_steps);
-    const current = Math.min(Math.max(1, data.current_step), total);
-    const pct = Math.round((current / total) * 100);
-    const labelText = data.step_label
-      ? `Step ${current} of ${total}: ${data.step_label}`
-      : `Step ${current} of ${total}`;
-    progressLabelEl.textContent = labelText;
-    progressFillEl.style.transform = `translateX(-${100 - pct}%)`;
-    progressEl.hidden = false;
-    latestProgress = data;
+  // The {scheduling_progress} tag is still stripped from message text by the
+  // artifact-segments parser (so stray emissions never leak as raw JSON), but
+  // the SDK no longer renders any visible progress indicator from it. The
+  // chat itself is the progress signal.
+  const applySchedulingProgress = (_data: SchedulingProgressArtifact | null) => {
+    // intentionally no-op
   };
 
   const clearSchedulingProgress = () => {
-    latestProgress = null;
-    progressEl.hidden = true;
-    progressLabelEl.textContent = '';
-    progressFillEl.style.transform = 'translateX(-100%)';
+    // intentionally no-op
   };
 
   // Send-button loading spinner for tokenExchange users (anonymous === false)
@@ -787,13 +946,6 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     streamingBubbleEl = null;
     streamingMsgId = currentStreamId;
     lastRenderedMessageCount = visibleMessages.length;
-    // Clear pinned progress when the active conversation changes — progress
-    // belongs to a flow, not the widget. Messages in the new conversation will
-    // re-emit progress artifacts as they re-render.
-    if (progressConversationId !== convo.id) {
-      clearSchedulingProgress();
-      progressConversationId = convo.id;
-    }
     lastRenderedConvoId = convo.id;
 
     for (const msg of visibleMessages) {
@@ -1320,31 +1472,20 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     phoneRow.className = 'sunny-verification-flow__phone-row';
     phoneRow.style.display = 'none';
 
-    const phoneRegionSelect = document.createElement('select');
-    phoneRegionSelect.className = 'sunny-verification-flow__phone-region';
-    phoneRegionSelect.disabled = waitingForCode || isSendingCode;
-    phoneRegionSelect.setAttribute('aria-label', 'Country or region');
-    for (const { code, label } of COUNTRY_CODES) {
-      const option = document.createElement('option');
-      option.value = code;
-      option.textContent = label;
-      if (code === '1' && label.includes('United States')) {
-        option.selected = true;
-      }
-      phoneRegionSelect.appendChild(option);
-    }
+    const countryPicker = createCountryPicker('US');
+    countryPicker.setDisabled(waitingForCode || isSendingCode);
 
-    const phoneInput = document.createElement('input');
-    phoneInput.type = 'tel';
-    phoneInput.className = 'sunny-verification-flow__input';
-    phoneInput.placeholder = 'Enter your phone number';
-    phoneInput.disabled = waitingForCode || isSendingCode;
+    const phoneInput = createDigitBubblePhoneInput('US');
+    phoneInput.setDisabled(waitingForCode || isSendingCode);
     if (prefill?.phone) {
-      phoneInput.value = prefill.phone;
+      phoneInput.setDigits(prefill.phone);
     }
+    countryPicker.onChange((iso) => {
+      phoneInput.setIso(iso);
+    });
 
-    phoneRow.appendChild(phoneRegionSelect);
-    phoneRow.appendChild(phoneInput);
+    phoneRow.appendChild(countryPicker.el);
+    phoneRow.appendChild(phoneInput.el);
 
     inputGroup.appendChild(methodToggle);
     inputGroup.appendChild(emailInput);
@@ -1518,14 +1659,14 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
         actionButton.textContent = 'Verify Code';
         codeGroup.style.display = 'block';
         emailInput.disabled = true;
-        phoneInput.disabled = true;
-        phoneRegionSelect.disabled = true;
+        phoneInput.setDisabled(true);
+        countryPicker.setDisabled(true);
       } else {
         actionButton.textContent = 'Send Code';
         codeGroup.style.display = 'none';
         emailInput.disabled = isSendingCode;
-        phoneInput.disabled = isSendingCode;
-        phoneRegionSelect.disabled = isSendingCode;
+        phoneInput.setDisabled(isSendingCode);
+        countryPicker.setDisabled(isSendingCode);
       }
       codeInputs.forEach(input => {
         input.disabled = isVerifyingCode;
@@ -1551,9 +1692,21 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       if (!waitingForCode) {
         // Start login flow
         const email = emailInput.value.trim();
-        const phoneDigits = phoneInput.value.replace(/\D/g, '');
-        const selectedCode = phoneRegionSelect.value;
-        const phone = phoneDigits ? `+${selectedCode}${phoneDigits}` : '';
+        const phoneDigits = phoneInput.getDigits();
+        const selectedIso = countryPicker.getIso();
+        // Normalize to E.164 via libphonenumber-js so countries with trunk
+        // prefixes (UK/DE/FR/IT/IN, etc.) get the leading 0 stripped
+        // correctly. Naive `+${callingCode}${digits}` concatenation produced
+        // invalid numbers for those locales and caused OTP delivery to fail.
+        let phone = '';
+        if (phoneDigits) {
+          try {
+            const parsed = parsePhoneNumberFromString(phoneDigits, selectedIso);
+            phone = parsed?.isValid() ? parsed.format('E.164') : '';
+          } catch {
+            phone = '';
+          }
+        }
 
         if (useEmail && !email) {
           showStatus('Please enter your email', 'error');
@@ -1561,6 +1714,10 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
         }
         if (!useEmail && !phoneDigits) {
           showStatus('Please enter your phone number', 'error');
+          return;
+        }
+        if (!useEmail && !phone) {
+          showStatus('That phone number doesn’t look quite right for the selected country. Mind double-checking?', 'error');
           return;
         }
 
@@ -1685,7 +1842,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
         useEmail = false;
         emailInput.style.display = 'none';
         phoneRow.style.display = 'flex';
-        phoneInput.value = '';
+        phoneInput.clear();
       } else {
         useEmail = true;
         emailInput.style.display = 'block';
@@ -2751,40 +2908,6 @@ function ensureStyles() {
     height: 18px;
   }
 
-  /* Pinned scheduling progress bar */
-  .sunny-chat__progress {
-    padding: 40px 24px 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    background: var(--sunny-color-background);
-    border-bottom: 1px solid var(--sunny-gray-100);
-  }
-  .sunny-chat__progress[hidden] {
-    display: none;
-  }
-  .sunny-chat__progress-label {
-    font-size: 0.82em;
-    color: var(--sunny-color-muted-text);
-    font-weight: 500;
-  }
-  .sunny-chat__progress-track {
-    position: relative;
-    width: 100%;
-    height: 8px;
-    border-radius: 999px;
-    background: var(--sunny-color-primary-border);
-    overflow: hidden;
-  }
-  .sunny-chat__progress-fill {
-    height: 100%;
-    width: 100%;
-    background: var(--sunny-color-primary);
-    border-radius: 999px;
-    transform: translateX(-100%);
-    transition: transform 300ms ease-out;
-    will-change: transform;
-  }
 
   /* Messages Area */
   .sunny-chat__messages {
@@ -3559,34 +3682,216 @@ function ensureStyles() {
   .sunny-verification-flow__phone-row {
     display: flex;
     gap: 8px;
+    align-items: stretch;
   }
-  .sunny-verification-flow__phone-region {
-    min-width: 0;
-    width: 56px;
-    padding: 12px 6px;
+
+  /* Country picker (replaces native <select>) */
+  .sunny-country-picker {
+    position: relative;
+    flex: 0 0 auto;
+  }
+  .sunny-country-picker__button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 12px 10px;
     border: 1px solid var(--sunny-gray-300);
     border-radius: 8px;
-    font-size: 1.071em;
-    font-family: inherit;
     background: var(--sunny-color-background);
     color: var(--sunny-color-text);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 1.071em;
+    line-height: 1;
     transition: border-color var(--sunny-transition-fast), box-shadow var(--sunny-transition-fast);
     outline: none;
-    cursor: pointer;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
-  .sunny-verification-flow__phone-region:focus {
+  .sunny-country-picker__button:focus-visible {
     border-color: var(--sunny-color-primary);
     box-shadow: 0 0 0 3px var(--sunny-color-primary-ring);
   }
-  .sunny-verification-flow__phone-region:disabled {
+  .sunny-country-picker__button:disabled {
     background: var(--sunny-gray-100);
     color: var(--sunny-gray-500);
     cursor: not-allowed;
   }
-  .sunny-verification-flow__phone-row .sunny-verification-flow__input {
-    flex: 1;
+  .sunny-country-picker__flag {
+    font-size: 1.2em;
+    line-height: 1;
+  }
+  .sunny-country-picker__chevron {
+    font-size: 0.65em;
+    color: var(--sunny-color-muted-text);
+    line-height: 1;
+  }
+  .sunny-country-picker__popover {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 20;
+    width: 280px;
+    max-width: calc(100vw - 48px);
+    background: var(--sunny-color-background);
+    border: 1px solid var(--sunny-gray-300);
+    border-radius: 10px;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.12);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .sunny-country-picker__popover[hidden] {
+    display: none;
+  }
+  .sunny-country-picker__search {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    border: none;
+    border-bottom: 1px solid var(--sunny-gray-200);
+    font-family: inherit;
+    font-size: 0.92em;
+    background: var(--sunny-color-background);
+    color: var(--sunny-color-text);
+    outline: none;
+  }
+  .sunny-country-picker__list {
+    max-height: 240px;
+    overflow-y: auto;
+    padding: 4px 0;
+  }
+  .sunny-country-picker__row {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border: none;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.92em;
+    color: var(--sunny-color-text);
+  }
+  .sunny-country-picker__row:hover,
+  .sunny-country-picker__row--focused {
+    background: var(--sunny-gray-100);
+  }
+  .sunny-country-picker__row--selected {
+    font-weight: 600;
+  }
+  .sunny-country-picker__row-flag {
+    font-size: 1.15em;
+    line-height: 1;
+    flex: 0 0 auto;
+  }
+  .sunny-country-picker__row-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    /* Allow long country names (e.g. "Saint Vincent and the Grenadines") to
+       wrap to a second line inside the popover. The whole point of this
+       picker is to surface the full name — truncating with ellipsis defeats
+       that. Rows grow vertically as needed. */
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.25;
+  }
+  .sunny-country-picker__row-code {
+    flex: 0 0 auto;
+    color: var(--sunny-color-muted-text);
+    font-variant-numeric: tabular-nums;
+  }
+  .sunny-country-picker__empty {
+    padding: 12px;
+    color: var(--sunny-color-muted-text);
+    text-align: center;
+    font-size: 0.9em;
+  }
+
+  /* Digit-bubble phone input (replaces single <input type="tel">) */
+  .sunny-digit-phone {
+    position: relative;
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    border: 1px solid var(--sunny-gray-300);
+    border-radius: 8px;
+    background: var(--sunny-color-background);
+    cursor: text;
+    transition: border-color var(--sunny-transition-fast), box-shadow var(--sunny-transition-fast);
+    min-height: 44px;
+  }
+  .sunny-digit-phone--focused {
+    border-color: var(--sunny-color-primary);
+    box-shadow: 0 0 0 3px var(--sunny-color-primary-ring);
+  }
+  .sunny-digit-phone__cells {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1 1 auto;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .sunny-digit-phone__cells::-webkit-scrollbar {
+    display: none;
+  }
+  .sunny-digit-phone__cell {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 26px;
+    padding: 0 2px;
+    border-bottom: 2px solid var(--sunny-gray-300);
+    font-size: 1.05em;
+    font-variant-numeric: tabular-nums;
+    color: var(--sunny-color-text);
+    transition: border-color var(--sunny-transition-fast);
+  }
+  .sunny-digit-phone__cell--filled {
+    border-bottom-color: var(--sunny-color-primary);
+  }
+  .sunny-digit-phone__cell--active {
+    border-bottom-color: var(--sunny-color-primary);
+    animation: sunny-digit-phone-caret 1s ease-in-out infinite;
+  }
+  .sunny-digit-phone__cell--overflow {
+    border-bottom-color: var(--sunny-color-warning, #d97706);
+  }
+  .sunny-digit-phone__sep {
+    display: inline-flex;
+    align-items: flex-end;
+    height: 26px;
+    color: var(--sunny-color-muted-text);
+    font-size: 0.95em;
+    user-select: none;
+  }
+  .sunny-digit-phone__input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    border: none;
+    background: transparent;
+    cursor: text;
+    font-size: 16px; /* prevent iOS zoom */
+    color: transparent;
+    caret-color: transparent;
+  }
+  .sunny-digit-phone__input:disabled {
+    cursor: not-allowed;
+  }
+  @keyframes sunny-digit-phone-caret {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sunny-digit-phone__cell--active {
+      animation: none;
+    }
   }
   .sunny-verification-flow__input {
     width: 100%;
@@ -4020,11 +4325,20 @@ function ensureStyles() {
     .sunny-verification-flow__code-inputs {
       gap: 6px;
     }
-    .sunny-verification-flow__phone-region {
-      min-width: 0;
-      width: 52px;
-      padding: 10px 4px;
-      font-size: 0.9em;
+    .sunny-country-picker__button {
+      padding: 10px 8px;
+      font-size: 0.95em;
+    }
+    .sunny-country-picker__popover {
+      width: 240px;
+    }
+    .sunny-digit-phone {
+      padding: 6px 10px;
+    }
+    .sunny-digit-phone__cell {
+      min-width: 14px;
+      height: 22px;
+      font-size: 0.95em;
     }
     .sunny-verification-flow__phone-row {
       gap: 6px;
@@ -4104,6 +4418,43 @@ function findUnclosedTripleBacktick(text: string): number {
 
 function splitArtifactSegments(text: string): ArtifactSegment[] {
   if (!text) return [];
+
+  // Defensive normalization. LLMs occasionally wrap artifact tags in markdown
+  // code fences (single or triple backticks) or hallucinate square brackets
+  // in place of curly braces. Unwrap and coerce *before* we look for tags so
+  // the raw JSON body never reaches the chat bubble.
+  //
+  // Implementation note: we deliberately use indexOf/split loops rather than
+  // regex with `\`+` quantifiers — patterns like /`+(\{tag\})`+/g exhibit
+  // polynomial backtracking on inputs with many runs of backticks (CodeQL
+  // js/polynomial-redos), and the input here is uncontrolled LLM text.
+  const ARTIFACT_TAG_NAMES = [
+    'scheduling_progress',
+    'verification_flow',
+    'email_confirm',
+    'doctor_profile',
+    'minimal_doctor_profile',
+    'expanded_doctor_profile',
+  ];
+  for (const name of ARTIFACT_TAG_NAMES) {
+    const openTag = `{${name}}`;
+    const closeTag = `{/${name}}`;
+    const openBracket = `[${name}]`;
+    const closeBracket = `[/${name}]`;
+    // Bracket-form coercion.
+    if (text.includes(openBracket)) text = text.split(openBracket).join(openTag);
+    if (text.includes(closeBracket)) text = text.split(closeBracket).join(closeTag);
+    // Backtick fence stripping — bounded fence sizes (1 or 3 backticks). We
+    // don't attempt to strip arbitrarily long backtick runs because such
+    // inputs are pathological and the matched-pair pass below will still
+    // truncate at the inner unclosed tag if anything slips through.
+    for (const fence of ['```', '`']) {
+      const wrappedOpen = `${fence}${openTag}${fence}`;
+      const wrappedClose = `${fence}${closeTag}${fence}`;
+      if (text.includes(wrappedOpen)) text = text.split(wrappedOpen).join(openTag);
+      if (text.includes(wrappedClose)) text = text.split(wrappedClose).join(closeTag);
+    }
+  }
 
   // Streaming artifact tags (long JSON bodies like {scheduling_progress}) span
   // multiple LLM tokens. Between the opening marker and the close arriving,
@@ -4354,9 +4705,12 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
     verificationCursor = end + VERIFICATION_FLOW_END.length;
   }
 
-  // Find scheduling progress tags. Body is a JSON object matching
-  // SchedulingProgressArtifact. Malformed payloads are dropped silently so a
-  // bad emission from the agent doesn't break the whole message render.
+  // Find scheduling progress tags. The tag span is *always* consumed (added
+  // to tagMatches) regardless of body shape — the SDK no longer renders a
+  // visible progress indicator from this artifact, and the only purpose of
+  // recognising it here is to keep the raw `{scheduling_progress}{...}` JSON
+  // body out of the chat bubble. Attempt JSON.parse for back-compat in case
+  // any consumer is reading `data`, but never gate consumption on it.
   let progressCursor = 0;
   while (progressCursor < text.length) {
     const start = text.indexOf(SCHEDULING_PROGRESS_START, progressCursor);
@@ -4365,31 +4719,22 @@ function splitArtifactSegments(text: string): ArtifactSegment[] {
     const end = text.indexOf(SCHEDULING_PROGRESS_END, contentStart);
     if (end === -1) break;
     const body = text.slice(contentStart, end).trim();
+    let parsed: SchedulingProgressArtifact | null = null;
     try {
-      const parsed = JSON.parse(body);
-      if (
-        parsed &&
-        typeof parsed === 'object' &&
-        typeof parsed.current_step === 'number' &&
-        typeof parsed.total_steps === 'number'
-      ) {
-        tagMatches.push({
-          type: 'scheduling_progress',
-          start,
-          end: end + SCHEDULING_PROGRESS_END.length,
-          data: parsed as SchedulingProgressArtifact,
-        });
+      const maybe = JSON.parse(body);
+      if (maybe && typeof maybe === 'object') {
+        parsed = maybe as SchedulingProgressArtifact;
       }
     } catch {
-      // Ignore malformed JSON; the tag span is still consumed below so it
-      // doesn't leak into the inline text.
-      tagMatches.push({
-        type: 'scheduling_progress',
-        start,
-        end: end + SCHEDULING_PROGRESS_END.length,
-        data: null,
-      });
+      // Body wasn't valid JSON — fall through with null data. We still
+      // consume the span below so it doesn't leak as text.
     }
+    tagMatches.push({
+      type: 'scheduling_progress',
+      start,
+      end: end + SCHEDULING_PROGRESS_END.length,
+      data: parsed,
+    });
     progressCursor = end + SCHEDULING_PROGRESS_END.length;
   }
 

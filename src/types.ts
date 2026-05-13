@@ -390,15 +390,39 @@ export interface VanillaChatPromptSuggestion {
  * progress bar at the top of the modal. Latest emission wins.
  */
 export interface SchedulingProgressArtifact {
-  /** 1-indexed current step within the flow. */
-  current_step: number;
-  /** Total number of steps in the flow. */
-  total_steps: number;
+  /**
+   * Step ids that have been satisfied for the current flow, in any order. The
+   * SDK renders a fixed row of bubbles in canonical chat-flow order and
+   * checks off whichever bubbles match these ids — so the agent can mark
+   * insurance done in the first turn if the user volunteers their group ID
+   * up front. Recognised ids for `flow: "schedule"`:
+   *   "reason", "plan", "provider", "location", "time", "patient",
+   *   "insurance", "verify".
+   * Unknown ids are ignored. Send the full set each time (idempotent
+   * replacement, not a diff).
+   */
+  completed_steps?: string[];
+  /**
+   * 1-indexed current step within the flow.
+   *
+   * @deprecated Prefer `completed_steps`. Retained for backward compatibility:
+   * when `completed_steps` is absent, the SDK treats steps 1..current_step-1
+   * as completed. Will be removed in a future major release.
+   */
+  current_step?: number;
+  /**
+   * Total number of steps in the flow.
+   *
+   * @deprecated Prefer `completed_steps`. Retained for backward compatibility
+   * with the legacy stepped-bar UI; the new bubble row uses the SDK's
+   * canonical step list instead.
+   */
+  total_steps?: number;
   /** Optional short label describing the current step (e.g., "Insurance details"). */
   step_label?: string;
   /** Optional flow identifier (e.g., "schedule", "cancel"). */
   flow?: string;
-  /** When true, the SDK hides the progress bar. Use to close out the flow. */
+  /** When true, the SDK hides the progress UI. Use to close out the flow. */
   completed?: boolean;
 }
 
