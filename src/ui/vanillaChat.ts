@@ -1910,9 +1910,21 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       // verifiedAwaitingSend: OTP succeeded earlier but the held prompt
       // failed to deliver. The action button now reads "Retry sending"
       // and we route back through trySendPostAuthMessage instead of
-      // re-running the OTP flow for an already-verified user.
+      // re-running the OTP flow for an already-verified user. Reuse
+      // isSendingCode as the in-flight guard so rapid double-clicks
+      // can't fire concurrent sendMessage calls (the guard at the top
+      // of handleSubmit already early-returns when isSendingCode is
+      // true). updateUI() disables the action button and inputs while
+      // the send is in flight; we restore both regardless of outcome.
       if (verifiedAwaitingSend) {
-        await trySendPostAuthMessage();
+        isSendingCode = true;
+        updateUI();
+        try {
+          await trySendPostAuthMessage();
+        } finally {
+          isSendingCode = false;
+          updateUI();
+        }
         return;
       }
 
