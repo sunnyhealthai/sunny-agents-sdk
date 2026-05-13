@@ -817,135 +817,200 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   // and the SDK checks them off — completion lands in any order (e.g. user
   // volunteers their group ID first → `insurance` lights up immediately even
   // though it's near the end of the row).
+  // Each flow has a fixed number of bubble slots (= the canonical list
+  // length). Bubbles fill in arrival order from the agent's
+  // `completed_steps` array, NOT in canonical order — so whichever piece
+  // of info the user volunteers first gets the leftmost slot. The labels
+  // here are kept short because they render under each filled bubble
+  // (e.g. 8 labels for the schedule flow have to fit across the chat
+  // width on mobile).
   const CANONICAL_STEPS: Record<string, Array<{ id: string; label: string }>> = {
     schedule: [
-      { id: 'reason', label: 'Visit reason' },
-      { id: 'plan', label: 'Insurance plan' },
-      { id: 'provider', label: 'Provider preference' },
+      { id: 'reason', label: 'Reason' },
+      { id: 'plan', label: 'Plan' },
+      { id: 'provider', label: 'Provider' },
       { id: 'location', label: 'Location' },
-      { id: 'time', label: 'Appointment time' },
-      { id: 'patient', label: 'Patient details' },
-      { id: 'insurance', label: 'Insurance details' },
-      { id: 'verify', label: 'Verification' },
+      { id: 'time', label: 'Time' },
+      { id: 'patient', label: 'Patient' },
+      { id: 'insurance', label: 'Insurance' },
+      { id: 'verify', label: 'Verify' },
     ],
     reschedule: [
       { id: 'appointment', label: 'Appointment' },
       { id: 'time', label: 'New time' },
-      { id: 'provider', label: 'Provider preference' },
-      { id: 'verify', label: 'Verification' },
+      { id: 'provider', label: 'Provider' },
+      { id: 'verify', label: 'Verify' },
     ],
     cancel: [
       { id: 'appointment', label: 'Appointment' },
-      { id: 'confirm', label: 'Confirm cancel' },
-      { id: 'verify', label: 'Verification' },
+      { id: 'confirm', label: 'Confirm' },
+      { id: 'verify', label: 'Verify' },
     ],
   };
 
-  const completedSetForData = (data: SchedulingProgressArtifact): Set<string> => {
+  // Compute the in-arrival-order list of completed step ids for this
+  // payload. Prefers the agent's `completed_steps` array order (since
+  // that's how we'll deduce "what the user gave us first"); falls back
+  // to legacy current_step inference against canonical order.
+  const completedOrderForData = (data: SchedulingProgressArtifact): string[] => {
     if (Array.isArray(data.completed_steps)) {
-      return new Set(data.completed_steps);
+      // De-dupe while preserving first occurrence order.
+      const seen = new Set<string>();
+      const out: string[] = [];
+      for (const id of data.completed_steps) {
+        if (typeof id === 'string' && !seen.has(id)) {
+          seen.add(id);
+          out.push(id);
+        }
+      }
+      return out;
     }
-    // Backward-compat for the legacy current_step/total_steps payload:
-    // treat steps 1..current_step-1 as completed against the canonical list.
     const flow = data.flow ?? 'schedule';
     const steps = CANONICAL_STEPS[flow] ?? CANONICAL_STEPS.schedule;
     const cs = typeof data.current_step === 'number' ? data.current_step : 0;
-    const inferred = new Set<string>();
-    for (let i = 0; i < Math.min(cs - 1, steps.length); i++) {
-      inferred.add(steps[i].id);
-    }
-    return inferred;
+    return steps.slice(0, Math.max(0, Math.min(cs - 1, steps.length))).map((s) => s.id);
   };
 
-  // Tracks the bubble row's current visible state so we can apply
-  // incremental updates instead of nuking and recreating every bubble on
-  // each render. The message list is rebuilt from scratch on every
-  // streamed token batch — without this cache, every batch would
-  // re-create the bubble DOM, re-add the `--done` class, and re-fire
-  // the pop animation on bubbles that had finished animating already
-  // (the "spaz / bouncing" the user reported).
+  // Track the row's currently-rendered state so we can do incremental
+  // diff updates rather than rebuilding on every streamed token batch.
   let renderedFlow: string | null = null;
-  let renderedDone: Set<string> = new Set();
+  // The ordered list of ids that occupy filled slots, in the order they
+  // were first seen by the SDK. Once an id is at slot N, it stays at
+  // slot N even if the agent reshuffles the array on a later emission.
+  let firstSeenOrder: string[] = [];
 
-  const buildBubbleElement = (step: { id: string; label: string }, isDone: boolean): HTMLSpanElement => {
+  const buildBubbleSlot = (
+    step: { id: string; label: string } | null,
+  ): HTMLDivElement => {
+    const slot = document.createElement('div');
+    slot.className = 'sunny-chat__status-slot';
     const bubble = document.createElement('span');
     bubble.className = 'sunny-chat__status-bubble';
-    bubble.title = step.label;
     bubble.setAttribute('role', 'img');
-    bubble.dataset.stepId = step.id;
-    bubble.setAttribute(
-      'aria-label',
-      `${step.label}: ${isDone ? 'done' : 'pending'}`,
-    );
-    if (isDone) {
+    if (step) {
+      bubble.title = step.label;
+      bubble.dataset.stepId = step.id;
+      bubble.setAttribute('aria-label', `${step.label}: done`);
       bubble.classList.add('sunny-chat__status-bubble--done');
       bubble.innerHTML =
         '<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
         '<path d="M2.5 6.2 5 8.5l4.5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>' +
         '</svg>';
+    } else {
+      bubble.setAttribute('aria-label', 'pending');
     }
-    return bubble;
+    const label = document.createElement('span');
+    label.className = 'sunny-chat__status-slot-label';
+    label.textContent = step?.label ?? '';
+    slot.appendChild(bubble);
+    slot.appendChild(label);
+    return slot;
   };
 
-  const flipBubbleDone = (bubble: HTMLElement, step: { id: string; label: string }) => {
-    bubble.classList.add('sunny-chat__status-bubble--done');
+  const fillSlot = (slot: HTMLElement, step: { id: string; label: string }) => {
+    const bubble = slot.querySelector('.sunny-chat__status-bubble') as HTMLElement | null;
+    const labelEl = slot.querySelector('.sunny-chat__status-slot-label') as HTMLElement | null;
+    if (!bubble || !labelEl) return;
+    bubble.title = step.label;
+    bubble.dataset.stepId = step.id;
     bubble.setAttribute('aria-label', `${step.label}: done`);
+    bubble.classList.add('sunny-chat__status-bubble--done');
     bubble.innerHTML =
       '<svg viewBox="0 0 12 12" aria-hidden="true" focusable="false">' +
       '<path d="M2.5 6.2 5 8.5l4.5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>' +
       '</svg>';
+    labelEl.textContent = step.label;
   };
 
-  const unflipBubble = (bubble: HTMLElement, step: { id: string; label: string }) => {
+  const emptySlot = (slot: HTMLElement) => {
+    const bubble = slot.querySelector('.sunny-chat__status-bubble') as HTMLElement | null;
+    const labelEl = slot.querySelector('.sunny-chat__status-slot-label') as HTMLElement | null;
+    if (!bubble || !labelEl) return;
+    bubble.removeAttribute('title');
+    delete bubble.dataset.stepId;
+    bubble.setAttribute('aria-label', 'pending');
     bubble.classList.remove('sunny-chat__status-bubble--done');
-    bubble.setAttribute('aria-label', `${step.label}: pending`);
     bubble.innerHTML = '';
+    labelEl.textContent = '';
   };
 
-  const setsEqual = (a: Set<string>, b: Set<string>): boolean => {
-    if (a.size !== b.size) return false;
-    for (const x of a) if (!b.has(x)) return false;
+  // Decide which ids are currently filled, in their visual order. New ids
+  // get appended; previously-seen ids stay at their original index even
+  // if the agent reorders the array. Ids that disappear from the incoming
+  // set get dropped (and the row collapses left).
+  const computeOrderedFilled = (
+    incomingIds: string[],
+    validStepIds: Set<string>,
+  ): string[] => {
+    const incomingSet = new Set(incomingIds);
+    const next: string[] = [];
+    // 1) Keep previously-seen ids in their original order if still present.
+    for (const id of firstSeenOrder) {
+      if (incomingSet.has(id) && validStepIds.has(id)) next.push(id);
+    }
+    // 2) Append any new ids in their incoming order.
+    const nextSet = new Set(next);
+    for (const id of incomingIds) {
+      if (!nextSet.has(id) && validStepIds.has(id)) {
+        next.push(id);
+        nextSet.add(id);
+      }
+    }
+    return next;
+  };
+
+  const orderedEqual = (a: string[], b: string[]): boolean => {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
     return true;
   };
 
   const renderStatusBubbles = (data: SchedulingProgressArtifact) => {
     const flow = data.flow ?? 'schedule';
     const steps = CANONICAL_STEPS[flow] ?? CANONICAL_STEPS.schedule;
-    const completed = completedSetForData(data);
+    const stepById = new Map(steps.map((s) => [s.id, s]));
+    const validIds = new Set(steps.map((s) => s.id));
+    const totalSlots = steps.length;
 
-    if (renderedFlow === flow && setsEqual(renderedDone, completed)) {
-      // Nothing visible to change — most common case during streaming
-      // when the same tag arrives again on every re-render.
+    const incomingOrder = completedOrderForData(data);
+    const nextOrder = computeOrderedFilled(incomingOrder, validIds);
+
+    if (renderedFlow === flow && orderedEqual(firstSeenOrder, nextOrder)) {
+      // Nothing visible to change — common case during streaming when
+      // the same tag arrives again.
       return;
     }
 
-    if (renderedFlow !== flow) {
-      // Flow changed (or first render): rebuild the row from scratch.
-      // This is rare in practice — flow doesn't switch mid-conversation.
+    if (renderedFlow !== flow || statusBubblesEl.children.length !== totalSlots) {
+      // Flow changed (or first render): build the slot row from scratch.
       statusBubblesEl.innerHTML = '';
-      for (const step of steps) {
-        statusBubblesEl.appendChild(buildBubbleElement(step, completed.has(step.id)));
+      for (let i = 0; i < totalSlots; i++) {
+        const id = nextOrder[i];
+        const step = id ? stepById.get(id) ?? null : null;
+        statusBubblesEl.appendChild(buildBubbleSlot(step));
       }
     } else {
-      // Same flow, completion set changed: walk existing bubbles and
-      // only toggle the ones that flipped. The pop animation in CSS
-      // is keyed to adding the `--done` class, so already-done bubbles
-      // sit still and only the newly-completed bubble animates — which
-      // is exactly the visual we want during streaming.
-      const existing = Array.from(statusBubblesEl.children) as HTMLElement[];
-      steps.forEach((step, i) => {
-        const bubble = existing[i];
-        if (!bubble) return;
-        const wasDone = renderedDone.has(step.id);
-        const isDone = completed.has(step.id);
-        if (wasDone === isDone) return;
-        if (isDone) flipBubbleDone(bubble, step);
-        else unflipBubble(bubble, step);
-      });
+      // Same flow, same slot count: walk slots, only toggle the ones
+      // whose occupant id changed. Newly-filled slots trigger the pop
+      // animation through the `--done` class transition.
+      const slotEls = Array.from(statusBubblesEl.children) as HTMLElement[];
+      for (let i = 0; i < totalSlots; i++) {
+        const slot = slotEls[i];
+        if (!slot) continue;
+        const prevId = firstSeenOrder[i] ?? null;
+        const nextId = nextOrder[i] ?? null;
+        if (prevId === nextId) continue;
+        if (nextId) {
+          const step = stepById.get(nextId);
+          if (step) fillSlot(slot, step);
+        } else {
+          emptySlot(slot);
+        }
+      }
     }
 
     renderedFlow = flow;
-    renderedDone = completed;
+    firstSeenOrder = nextOrder;
   };
 
   const applySchedulingProgress = (data: SchedulingProgressArtifact | null) => {
@@ -956,7 +1021,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       statusLabelEl.textContent = '';
       statusBubblesEl.innerHTML = '';
       renderedFlow = null;
-      renderedDone = new Set();
+      firstSeenOrder = [];
       return;
     }
     statusLabelEl.textContent = statusLabelForFlow(data.flow);
@@ -971,7 +1036,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     statusLabelEl.textContent = '';
     statusBubblesEl.innerHTML = '';
     renderedFlow = null;
-    renderedDone = new Set();
+    firstSeenOrder = [];
   };
 
   // Send-button loading spinner for tokenExchange users (anonymous === false)
@@ -3191,11 +3256,23 @@ function ensureStyles() {
     color: transparent;
     animation: sunny-chat-status-shimmer 2.6s linear infinite;
   }
+  /* Even-spaced slot row. Each slot is a column (bubble on top, label
+     under it) and all slots flex equally, so the bubble row reads as
+     dots distributed across the full status-area width. */
   .sunny-chat__status-bubbles {
     display: flex;
-    gap: 8px;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 4px;
+    width: 100%;
+  }
+  .sunny-chat__status-slot {
+    display: flex;
+    flex-direction: column;
     align-items: center;
-    flex-wrap: wrap;
+    gap: 4px;
+    flex: 1 1 0;
+    min-width: 0;
   }
   .sunny-chat__status-bubble {
     display: inline-flex;
@@ -3208,6 +3285,7 @@ function ensureStyles() {
     background: var(--sunny-color-background);
     color: transparent;
     transition: background 200ms ease, border-color 200ms ease, color 200ms ease, transform 200ms ease;
+    flex: 0 0 auto;
   }
   .sunny-chat__status-bubble svg {
     width: 10px;
@@ -3218,6 +3296,20 @@ function ensureStyles() {
     border-color: var(--sunny-color-primary);
     color: var(--sunny-color-on-primary, #fff);
     animation: sunny-chat-status-bubble-pop 320ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .sunny-chat__status-slot-label {
+    font-size: 0.65em;
+    color: var(--sunny-color-muted-text);
+    text-align: center;
+    line-height: 1.15;
+    /* Truncate gracefully on extra-narrow viewports if the label can't
+       fit its slot — the bubble's title attribute still has the full
+       text on hover. */
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-height: 0.85em; /* reserve baseline so the row doesn't jump as labels appear */
   }
   @keyframes sunny-chat-status-shimmer {
     0% { background-position: 100% 0; }
@@ -4663,13 +4755,17 @@ function ensureStyles() {
       padding: 10px 12px;
       font-size: 1em;
     }
-    /* Progress bubbles row stays tight + wraps cleanly when the bubble
-       count would otherwise overflow the chat width. */
+    /* Progress bubbles row: keep evenly-spaced slots but tighten the gap
+       and shrink the labels so 8 slots fit on a phone width without
+       overflow. */
     .sunny-chat__status {
       padding: 32px 16px 6px;
     }
     .sunny-chat__status-bubbles {
-      gap: 6px;
+      gap: 2px;
+    }
+    .sunny-chat__status-slot-label {
+      font-size: 0.6em;
     }
     .sunny-chat__thinking-dot {
       width: 7px;
