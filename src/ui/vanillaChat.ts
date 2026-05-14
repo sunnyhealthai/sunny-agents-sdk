@@ -812,18 +812,18 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     }
   };
 
-  // Canonical bubble layout per flow. Bubbles render in this exact order;
-  // the agent reports which ids have been satisfied via `completed_steps`
-  // and the SDK checks them off — completion lands in any order (e.g. user
-  // volunteers their group ID first → `insurance` lights up immediately even
-  // though it's near the end of the row).
-  // Each flow has a fixed number of bubble slots (= the canonical list
-  // length). Bubbles fill in arrival order from the agent's
-  // `completed_steps` array, NOT in canonical order — so whichever piece
-  // of info the user volunteers first gets the leftmost slot. The labels
-  // here are kept short because they render under each filled bubble
-  // (e.g. 8 labels for the schedule flow have to fit across the chat
-  // width on mobile).
+  // Canonical bubble layout per flow. Each flow has a fixed pipeline of
+  // steps; the row always renders one slot per canonical step, in this
+  // exact order. The agent reports which ids it considers satisfied via
+  // `completed_steps`, and the SDK checks the corresponding bubble.
+  //
+  // Progress is monotonic: once a bubble is checked off it stays checked
+  // for the lifetime of this flow, even if the agent later drops that id
+  // from `completed_steps` (e.g. re-asks the user to pick a provider).
+  // Bubbles may light up out of order — if the user volunteers their group
+  // ID first, `insurance` lights up immediately even though it's near the
+  // end of the row — but they never *un*-light. Labels are kept short
+  // because 8 of them have to fit across the chat width on mobile.
   const CANONICAL_STEPS: Record<string, Array<{ id: string; label: string }>> = {
     schedule: [
       { id: 'reason', label: 'Reason' },
@@ -874,10 +874,10 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
   // Track the row's currently-rendered state so we can do incremental
   // diff updates rather than rebuilding on every streamed token batch.
   let renderedFlow: string | null = null;
-  // The ordered list of ids that occupy filled slots, in the order they
-  // were first seen by the SDK. Once an id is at slot N, it stays at
-  // slot N even if the agent reshuffles the array on a later emission.
-  let firstSeenOrder: string[] = [];
+  // Monotonic set of step ids that have been checked off in this flow.
+  // Grows only — an id leaving the agent's `completed_steps` does not
+  // remove it from here. Reset on flow change or flow completion.
+  let completedIds = new Set<string>();
 
   const buildBubbleSlot = (
     step: { id: string; label: string } | null,
@@ -922,95 +922,48 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     labelEl.textContent = step.label;
   };
 
-  const emptySlot = (slot: HTMLElement) => {
-    const bubble = slot.querySelector('.sunny-chat__status-bubble') as HTMLElement | null;
-    const labelEl = slot.querySelector('.sunny-chat__status-slot-label') as HTMLElement | null;
-    if (!bubble || !labelEl) return;
-    bubble.removeAttribute('title');
-    delete bubble.dataset.stepId;
-    bubble.setAttribute('aria-label', 'pending');
-    bubble.classList.remove('sunny-chat__status-bubble--done');
-    bubble.innerHTML = '';
-    labelEl.textContent = '';
-  };
-
-  // Decide which ids are currently filled, in their visual order. New ids
-  // get appended; previously-seen ids stay at their original index even
-  // if the agent reorders the array. Ids that disappear from the incoming
-  // set get dropped (and the row collapses left).
-  const computeOrderedFilled = (
-    incomingIds: string[],
-    validStepIds: Set<string>,
-  ): string[] => {
-    const incomingSet = new Set(incomingIds);
-    const next: string[] = [];
-    // 1) Keep previously-seen ids in their original order if still present.
-    for (const id of firstSeenOrder) {
-      if (incomingSet.has(id) && validStepIds.has(id)) next.push(id);
-    }
-    // 2) Append any new ids in their incoming order.
-    const nextSet = new Set(next);
-    for (const id of incomingIds) {
-      if (!nextSet.has(id) && validStepIds.has(id)) {
-        next.push(id);
-        nextSet.add(id);
-      }
-    }
-    return next;
-  };
-
-  const orderedEqual = (a: string[], b: string[]): boolean => {
-    if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-    return true;
-  };
-
   const renderStatusBubbles = (data: SchedulingProgressArtifact) => {
     const flow = data.flow ?? 'schedule';
     const steps = CANONICAL_STEPS[flow] ?? CANONICAL_STEPS.schedule;
-    const stepById = new Map(steps.map((s) => [s.id, s]));
     const validIds = new Set(steps.map((s) => s.id));
     const totalSlots = steps.length;
 
-    const incomingOrder = completedOrderForData(data);
-    const nextOrder = computeOrderedFilled(incomingOrder, validIds);
+    // On flow change, drop any previously-filled ids from the prior flow.
+    if (renderedFlow !== flow) completedIds = new Set<string>();
 
-    if (renderedFlow === flow && orderedEqual(firstSeenOrder, nextOrder)) {
-      // Nothing visible to change — common case during streaming when
-      // the same tag arrives again.
-      return;
+    // Merge incoming completed ids into the cumulative set. Monotonic:
+    // we never remove an id once it's been seen as completed.
+    for (const id of completedOrderForData(data)) {
+      if (validIds.has(id)) completedIds.add(id);
     }
 
     if (renderedFlow !== flow || statusBubblesEl.children.length !== totalSlots) {
-      // Flow changed (or first render): build the slot row from scratch.
+      // Flow changed (or first render): build the slot row in canonical
+      // order. Each slot is pre-assigned to its canonical step; filled
+      // bubbles get the label, empty bubbles render as placeholders.
       statusBubblesEl.innerHTML = '';
-      for (let i = 0; i < totalSlots; i++) {
-        const id = nextOrder[i];
-        const step = id ? stepById.get(id) ?? null : null;
-        statusBubblesEl.appendChild(buildBubbleSlot(step));
+      for (const step of steps) {
+        statusBubblesEl.appendChild(
+          buildBubbleSlot(completedIds.has(step.id) ? step : null),
+        );
       }
     } else {
-      // Same flow, same slot count: walk slots, only toggle the ones
-      // whose occupant id changed. Newly-filled slots trigger the pop
-      // animation through the `--done` class transition.
+      // Same flow: walk slots in canonical order, fill any that the LLM
+      // has now marked complete. Never empty a slot — progress is monotonic.
       const slotEls = Array.from(statusBubblesEl.children) as HTMLElement[];
       for (let i = 0; i < totalSlots; i++) {
         const slot = slotEls[i];
-        if (!slot) continue;
-        const prevId = firstSeenOrder[i] ?? null;
-        const nextId = nextOrder[i] ?? null;
-        if (prevId === nextId) continue;
-        if (nextId) {
-          const step = stepById.get(nextId);
-          if (step) fillSlot(slot, step);
-        } else {
-          emptySlot(slot);
-        }
+        const step = steps[i];
+        if (!slot || !step) continue;
+        const isDone = completedIds.has(step.id);
+        const alreadyDone = slot
+          .querySelector('.sunny-chat__status-bubble')
+          ?.classList.contains('sunny-chat__status-bubble--done');
+        if (isDone && !alreadyDone) fillSlot(slot, step);
       }
     }
 
     renderedFlow = flow;
-    firstSeenOrder = nextOrder;
   };
 
   const applySchedulingProgress = (data: SchedulingProgressArtifact | null) => {
@@ -1021,7 +974,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
       statusLabelEl.textContent = '';
       statusBubblesEl.innerHTML = '';
       renderedFlow = null;
-      firstSeenOrder = [];
+      completedIds = new Set<string>();
       return;
     }
     statusLabelEl.textContent = statusLabelForFlow(data.flow);
@@ -1036,7 +989,7 @@ export function attachSunnyChat(options: VanillaChatOptions): VanillaChatInstanc
     statusLabelEl.textContent = '';
     statusBubblesEl.innerHTML = '';
     renderedFlow = null;
-    firstSeenOrder = [];
+    completedIds = new Set<string>();
   };
 
   // Send-button loading spinner for tokenExchange users (anonymous === false)
